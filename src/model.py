@@ -52,9 +52,6 @@ class ToyBackdoor(Backdoor):
             self.bias = nn.Parameter(bias_real, requires_grad=True)
 
 
-
-
-
 class EasyNet(nn.Module):
     def __init__(self, encoder, backdoor, num_classes=10):
         super().__init__()
