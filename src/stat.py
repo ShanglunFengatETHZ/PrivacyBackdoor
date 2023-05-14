@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 import argparse
 from model import ToyEncoder
 from data import load_dataset, get_subdataset, get_dataloader
+import math
 
 from tools import weights_generator
 
@@ -33,10 +34,23 @@ def generate_distribution(images, weights):
     return images @ weights
 
 
-def show_distribution(samples_all, idx):
+def show_distribution(samples_all, idxs):
     # TODO: subplot for multiple outputs
-    plt.hist(samples_all[:, idx])
-    plt.show()
+    if not isinstance(idxs, list):
+        plt.hist(samples_all[:, idxs])
+        plt.show()
+    else:
+        num = len(idxs)
+        h = math.ceil(math.sqrt(num) * 6 / 5)  # h > w
+        w = math.ceil(num / h)
+        fig, axs = plt.subplots(h, w)
+
+        for j in range(num):
+            idx = idxs[j]
+            samples = samples_all[:, idx]
+
+            iw, ih = num // h, num % h
+            axs[ih, iw].hist(samples)
 
 
 def cal_quantiles(samples, q):

@@ -1,7 +1,8 @@
 # things like plot images and pint parameters.
 import torch
+import matplotlib.pyplot as plt
+import math
 
-# TODO: plot
 
 def setdiff1d(n, idx):
     assert isinstance(n, int) and n > 0, 'invalid length'
@@ -54,3 +55,19 @@ def predict(classifier, dataloader, device, topk=5):
             correct_top_k += torch.eq(y_hat_topk, y.view(-1, 1)).sum()
     return size, correct, correct_top_k
 
+
+def plot_recovery(images, bias=(0.0, 0.0, 0.0), scaling=(1.0, 1.0, 1.0)):
+    # images is a list of tensors 3 * w * h
+    num = len(images)
+    h = math.ceil(math.sqrt(num) * 6 / 5)  # h > w
+    w = math.ceil(num / h)
+    fig, axs = plt.subplots(h, w)
+    bias = torch.tensor(bias)
+    scaling = torch.tensor(scaling)
+
+    for j in range(num):
+        image = images[j]
+        image_revise = (image + bias) * scaling
+
+        iw, ih = num // h, num % h
+        axs[ih, iw].imshow(image_revise.permute(1, 2, 0))
