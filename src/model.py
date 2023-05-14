@@ -39,17 +39,45 @@ class ToyBackdoor(Backdoor):
         self.weights = None
         self.bias = None
 
+        self._stored_weights = None
+        self._stored_bias = None
+
     def forward(self, features):
         return F.relu(features @ self.weights + self.bias * self.bias_scaling)
 
     def castbait_weight(self, weights):
         if weights.shape[0] == self.num_input and weights.shape[1] == self.num_output:
             self.weights = nn.Parameter(weights, requires_grad=True)
+            self._stored_weights = weights.clone()
+            self._stored_weights.requires_grad = False
 
     def castbait_bias(self, bias):
         if bias.shape[0] == self.num_output:
             bias_real = bias / self.bias_scaling
             self.bias = nn.Parameter(bias_real, requires_grad=True)
+            self._stored_bias = bias.clone()
+            self._stored_bias.requires_grad = False
+
+    def recovery(self, width):
+        device = self._stored_weights.device
+        new_weights = self.weights.detach().clone().to(device)
+        new_bias = self.bias.detach().clone().to(device)
+
+        weights_delta = new_weights - self._stored_weights
+        bias_delta = new_bias - self._stored_bias
+
+        pics = []
+        for j in len(bias_delta):
+            weights_var = weights_delta[j]
+            bias_var = bias_delta[j]
+            if new_bias.norm() > 1e-6:
+                scaling = self.bias_scaling.to(device)
+                pic = weights_var / bias_var * scaling
+                pic.reshape(3, width, width)
+                pics.append(pic)
+            else:
+                pics.append(torch.ones(3, width, width) * 1e-6)
+        return pics
 
 
 class EasyNet(nn.Module):

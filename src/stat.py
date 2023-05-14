@@ -34,6 +34,7 @@ def generate_distribution(images, weights):
 
 
 def show_distribution(samples_all, idx):
+    # TODO: subplot for multiple outputs
     plt.hist(samples_all[:, idx])
     plt.show()
 
