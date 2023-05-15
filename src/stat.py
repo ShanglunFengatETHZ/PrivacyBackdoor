@@ -55,7 +55,7 @@ def show_distribution(samples_all, idxs):
 
 def cal_quantiles(samples, q):
     qt = torch.tensor(q)
-    return torch.quantitle(samples, qt, keepdim=False, interpolation='linear')
+    return torch.quantile(samples, qt, keepdim=False, interpolation='linear')
 
 
 def cal_allquantiles(samples_all, q, idxs=None):
