@@ -100,13 +100,15 @@ if __name__ == '__main__':
     # get inner products
     fts_code = []
     fts_weight = []
-    for X, _ in dl_code: # TODO: do we really need batch here?
-        ft_code = encoder(X)
-        fts_code.append(ft_code)
 
-    for X, _ in dl_weight:
-        ft_weight = encoder(X)
-        fts_weight.append(ft_weight)
+    with torch.no_grad():
+        for X, _ in dl_code: # TODO: do we really need batch here?
+            ft_code = encoder(X)
+            fts_code.append(ft_code)
+
+        for X, _ in dl_weight:
+            ft_weight = encoder(X)
+            fts_weight.append(ft_weight)
 
     fts_code = torch.cat(fts_code)
     fts_weight = torch.cat(fts_weight)

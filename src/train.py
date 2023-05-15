@@ -9,10 +9,9 @@ def get_optimizer(model, lr=0.1):
 
 
 def train_model(model, dataloaders, optimizer, logger, num_epochs, device):
+    # only adjust device in this function
     model = model.to(device)
     loss_func = nn.CrossEntropyLoss()
-
-    num_batches = len(dataloaders['train'])
 
     for epoch in range(num_epochs):
         logger.info('Epoch {}'.format(epoch))
@@ -53,4 +52,4 @@ def train_model(model, dataloaders, optimizer, logger, num_epochs, device):
             epoch_loss = running_loss / len(dataloaders[phase].dataset)
             epoch_acc = float(running_corrects) / len(dataloaders[phase].dataset)
             logger.info('{} Loss: {:.4f} Acc: {:.4f}'.format(phase, epoch_loss, epoch_acc))
-    return model
+    return model.to('cpu')
