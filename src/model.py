@@ -5,11 +5,14 @@ from tools import weights_generator
 
 
 class ToyEncoder(nn.Module):
-    def __init__(self, downsampling_factor=None, is_normalize=False, scale_constant=1.0):
+    # TDOD: attribute what is the output
+    def __init__(self, downsampling_factor=None, is_normalize=False, scale_constant=1.0, input_resolution=32):
         super().__init__()
         self.downsampling_factor = downsampling_factor
         self.is_normalize = is_normalize
         self.scale_constant = nn.Parameter(scale_constant, requires_grad=False)
+        self.input_resolution = input_resolution
+        self.out_fts = self.calculate_out_fts()
 
     def forward(self, images):
         if isinstance(self.downsampling_factor, tuple):
@@ -22,6 +25,11 @@ class ToyEncoder(nn.Module):
 
         features = features_raw / features_raw.norm(dim=-1, keepdim=True) if self.is_normalize else features_raw
         return features * self.scale_constant
+
+    def calculate_out_fts(self):
+        blank = torch.empty(1, 3, self.input_resolution, self.input_resolution)
+        blank_rescale = F.interpolate(blank, scale_factor=self.downsampling_factor, mode='bilinear')
+        return blank_rescale.shape.numel()
 
 
 class Backdoor(nn.Module):
@@ -103,4 +111,23 @@ class EasyNet(nn.Module):
         features_dirty = self.backdoor(features)
         logit = self.ln(features_dirty)
         return logit
+
+
+def make_an_toy_net(input_resolution=32, num_class=10,
+                    downsampling_factor=None, is_encoder_normalize=False, encoder_scale_constant=1.0,
+                    num_leaker=64, bias_scaling=1.0, backdoor_weight_mode='uniform', is_backdoor_normalize=True, backdoor_images=None, backdoor_bias=-1.0,
+                    ln_weight_mode='fix_sparse', ln_weight_factor=1.0, ln_bias_mode='constant', ln_bias_factor=0.0):
+    encoder = ToyEncoder(downsampling_factor=downsampling_factor, is_normalize=is_encoder_normalize, scale_constant=encoder_scale_constant, input_resolution=input_resolution)
+    fts_encoder = encoder.out_fts
+    backdoor = ToyBackdoor(num_input=fts_encoder, num_output=num_leaker, bias_scaling=bias_scaling)
+    backdoor_fts = encoder(backdoor_images)
+    backdoor_weight = weights_generator(backdoor.num_input, backdoor.num_output, mode=backdoor_weight_mode, is_normalize=is_backdoor_normalize, images=backdoor_fts)
+    backdoor.castbait_weight(backdoor_weight)
+    backdoor_bias = torch.ones(backdoor.num_output) * backdoor_bias
+    backdoor.castbait_bias(backdoor_bias)
+
+    toy_net = EasyNet(encoder, backdoor, num_class)
+    toy_net.set_weights(mode=ln_weight_mode, c=ln_weight_factor)
+    toy_net.set_bias(mode=ln_bias_mode, b=ln_bias_factor)
+    return toy_net
 

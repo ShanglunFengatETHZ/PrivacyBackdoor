@@ -83,7 +83,7 @@ if __name__ == '__main__':
     # get dataset
     dataset = args.dataset
     root = args.root
-    ds_train, ds_test = load_dataset(root, dataset)
+    ds_train, ds_test, _, _ = load_dataset(root, dataset)
 
     assert isinstance(args.subset, float)
     p = args.subset
@@ -100,7 +100,7 @@ if __name__ == '__main__':
     # get inner products
     fts_code = []
     fts_weight = []
-    for X, _ in dl_code:
+    for X, _ in dl_code: # TODO: do we really need batch here?
         ft_code = encoder(X)
         fts_code.append(ft_code)
 

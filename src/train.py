@@ -8,13 +8,13 @@ def get_optimizer(model, lr=0.1):
     return SGD(params=params, lr=lr)
 
 
-def train(model, dataloaders, optimizer, logger, num_epoches, device):
+def train_model(model, dataloaders, optimizer, logger, num_epochs, device):
     model = model.to(device)
     loss_func = nn.CrossEntropyLoss()
 
     num_batches = len(dataloaders['train'])
 
-    for epoch in range(num_epoches):
+    for epoch in range(num_epochs):
         logger.info('Epoch {}'.format(epoch))
 
         for phase in ['train', 'val']:  # Each epoch has a training and validation phase
