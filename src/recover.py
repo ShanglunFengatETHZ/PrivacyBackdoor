@@ -12,7 +12,7 @@ def parse_args():
     return parser.parse_args()
 
 
-def extract_information(model_path, bias=0.0, scaling=1.0):
+def extract_information(model_path, bias=(0.0, 0.0, 0.0), scaling=(1.0, 1.0, 1.0)):
     model = torch.load(model_path)
     model.eval()
     images = model.recovery()
