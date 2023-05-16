@@ -37,6 +37,8 @@ def weights_generator(num_input, num_output, mode='uniform',
             weights = torch.zeros(num_input, num_output)
             idx_nonzero = torch.randint(num_output, (num_input, ))
             weights[torch.arange(num_input), idx_nonzero] = 1.0
+        case _:
+            assert False, 'Invalid weight generating mode'
 
     weights = weights / weights.norm(dim=0, keepdim=True) if is_normalize else weights
 
@@ -61,3 +63,12 @@ def plot_recovery(images, bias=(0.0, 0.0, 0.0), scaling=(1.0, 1.0, 1.0)):
 
         iw, ih = num // h, num % h
         axs[ih, iw].imshow(image_revise.permute(1, 2, 0))
+
+
+def pass_forward(net, dataloader):
+    fts = []
+    with torch.no_grad():
+        for X, y in dataloader:
+            ft = net(X)
+            fts.append(ft)
+    return torch.cat(fts)

@@ -2,10 +2,9 @@ import torch
 import matplotlib.pyplot as plt
 import argparse
 from model import ToyEncoder
-from data import load_dataset, get_subdataset
+from data import load_dataset, get_subdataset, get_dataloader
 import math
-
-from tools import weights_generator
+from tools import weights_generator, pass_forward
 
 
 def parse_args():
@@ -22,7 +21,7 @@ def parse_args():
     parser.add_argument('--num_output', default=100, type=int, help='how many leaker do we want')
 
     parser.add_argument('--is_plot', default=True, type=bool)  # how to show statistics
-    parser.add_argument('--plot_idx', nargs='+', type=int, defualt=0, help='which output feature to plot')
+    parser.add_argument('--plot_idx', nargs='+', type=int, default=0, help='which output feature to plot')
     parser.add_argument('--is_q', default=True, type=bool)
     parser.add_argument('--q_idx', nargs='+', type=int, default=0, help='which output feature to show')
     parser.add_argument('--q', nargs='+', type=float, default=0.5, help='what quantile we interested in')
@@ -38,11 +37,11 @@ def inner_product(image_fts, weights):
 
 
 def show_distribution(outputs, idxs):
-    if idxs is int:
+    if isinstance(idxs, int):
         plt.hist(outputs[:, idxs])
-    elif idxs is list and len(idxs) == 1:
+    elif isinstance(idxs, list) and len(idxs) == 1:
         plt.hist(outputs[:, idxs[0]])
-    elif idxs is list and len(idxs) > 1:
+    elif isinstance(idxs, list) and len(idxs) > 1:
         num = len(idxs)
 
         h = math.ceil(math.sqrt(num) * 6 / 5)  # h > w
@@ -70,16 +69,16 @@ def cal_quantiles(outputs, idx, q):
 
 def cal_allquantiles(outputs, idxs=None, q=0.5):
     q_all = []
-    if idxs is int:
+    if isinstance(idxs, int):
         idxs = [idxs]
-    elif idxs is tuple:
+    elif isinstance(idxs, tuple):
         idxs = list(idxs)
     elif idxs is None:
         idxs = torch.arange(outputs.shape[1])
-    elif idxs is list and max(idxs) >= outputs.shape[1]:
+    elif isinstance(idxs, list) and max(idxs) >= outputs.shape[1]:
         idxs = torch.arange(outputs.shape[1])
     else:
-        assert idxs is list, 'unrecognized idxs input'
+        assert isinstance(idxs, list), 'unrecognized idxs input'
 
     for idx in idxs:
         qs = cal_quantiles(outputs[:, idx], idx=idx, q=q)
@@ -88,16 +87,15 @@ def cal_allquantiles(outputs, idxs=None, q=0.5):
     return torch.stack(q_all, dim=0)  # outputs * quantile
 
 
-if __name__ == '__main__':
-    # use training dataset for input, use test set for constructing.
+def main():
     args = parse_args()
 
     # get dataset
     rs = args.rs
     ds_train, ds_test, resolution, _ = load_dataset(args.root, args.dataset)
-    ds_fts = get_subdataset(ds_train, p=args.fts_subset, random_seed=rs)
-    # dl_fts = get_dataloader(ds_fts, batch_size=64, num_workers=4)
-    ds_weights = get_subdataset(ds_test, p=args.bait_subset, random_seed=rs)
+    ds_fts, _ = get_subdataset(ds_train, p=args.fts_subset, random_seed=rs)
+    ds_weights, _ = get_subdataset(ds_test, p=args.bait_subset, random_seed=rs)
+    dl_fts, dl_weights = get_dataloader(ds0=ds_fts, ds1=ds_weights, batch_size = 64, num_workers = 2)
 
     # get model
     encoder = ToyEncoder(input_resolution=resolution, downsampling_factor=args.downscaling, is_normalize=True)
@@ -105,13 +103,12 @@ if __name__ == '__main__':
     # we only consider normalized encoder, the ONLY variable is down-scaling, i.e, the output resolution.
 
     # get inner products
-    with torch.no_grad():
-        fts = encoder(ds_fts)
 
-        if args.weight_mode == 'images':
-            weight_imgs = encoder(ds_weights)
-        else:
-            weight_imgs = None
+    fts = pass_forward(encoder, dl_fts)
+    if args.weight_mode == 'images':
+        weight_imgs = pass_forward(encoder, dl_weights)
+    else:
+        weight_imgs = None
 
     weights = weights_generator(num_input=encoder.out_fts, num_output=args.num_output, mode=args.weight_mode,
                                 is_normalize=True, image_fts=weight_imgs)
@@ -125,6 +122,11 @@ if __name__ == '__main__':
 
     if args.is_q:
         qts = cal_allquantiles(outputs, idxs=args.q_idx, q=args.q)
-        print('prob', *args.q, sep=",")
+        print('prob', *list(args.q), sep=",")
         for j in range(len(qts)):
             print(f'idx:{j}', *(qts[j].tolist()), sep=",")
+
+
+if __name__ == '__main__':
+    # use training dataset for input, use test set for constructing.
+    main()

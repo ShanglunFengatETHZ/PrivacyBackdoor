@@ -10,10 +10,10 @@ class ToyEncoder(nn.Module):
         super().__init__()
         self.input_resolution = input_resolution
 
-        if downsampling_factor is list or downsampling_factor is tuple:
+        if isinstance(downsampling_factor, list) or isinstance(downsampling_factor, tuple):
             assert len(downsampling_factor) == 2, 'invalid dimension for downsampling, only 2(h,w) is allowed'
             self.downsampling_factor = tuple(downsampling_factor)
-        elif downsampling_factor is float:
+        elif isinstance(downsampling_factor, float):
             self.downsampling_factor = tuple([downsampling_factor, downsampling_factor])
         else:
             self.downsampling_factor = None
@@ -39,8 +39,11 @@ class ToyEncoder(nn.Module):
     @property
     def out_fts(self):
         blank = torch.empty(1, 3, self.input_resolution, self.input_resolution)
-        blank_rescale = F.interpolate(blank, scale_factor=self.downsampling_factor, mode='bilinear')
-        return blank_rescale.shape.numel()
+        if isinstance(self.downsampling_factor, tuple):
+            blank_rescale = F.interpolate(blank, scale_factor=self.downsampling_factor, mode='bilinear')
+            return blank_rescale.shape.numel()
+        else:
+            return blank.shape.numel()
 
 
 class Backdoor(nn.Module):  # backdoor has to have the method recovery for leaking information
