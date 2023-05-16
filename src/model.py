@@ -150,7 +150,10 @@ def make_an_toy_net(input_resolution=32, num_class=10,
     fts_encoder = encoder.out_fts
 
     backdoor = ToyBackdoor(num_input=fts_encoder, num_output=num_leaker, bias_scaling=bias_scaling)
-    backdoor_fts = encoder(backdoor_images)
+    if backdoor_images is not None:
+        backdoor_fts = encoder(backdoor_images)
+    else:
+        backdoor_fts = None
     backdoor_weight = weights_generator(backdoor.num_input, backdoor.num_output, mode=backdoor_weight_mode, is_normalize=is_backdoor_normalize, image_fts=backdoor_fts)
     backdoor.castbait_weight(backdoor_weight)
     backdoor_bias = torch.ones(backdoor.num_output) * backdoor_bias
