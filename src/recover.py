@@ -24,9 +24,11 @@ if __name__ == '__main__':
     args = parse_args()
 
     model_path = args.path
-    bias = tuple(args.bias)
-    scaling = tuple(args.scaling)
 
-    print('bias:', bias)
+    bias = tuple(args.bias)
+    print('bias:', args.bias)
+
+    scaling = tuple(args.scaling)
     print('scaling:', scaling)
+
     extract_information(model_path, bias=bias, scaling=scaling)

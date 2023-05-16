@@ -76,6 +76,8 @@ def cal_allquantiles(outputs, idxs=None, q=0.5):
         idxs = list(idxs)
     elif idxs is None:
         idxs = torch.arange(outputs.shape[1])
+    elif idxs is list and max(idxs) >= outputs.shape[1]:
+        idxs = torch.arange(outputs.shape[1])
     else:
         assert idxs is list, 'unrecognized idxs input'
 
