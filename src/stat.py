@@ -22,10 +22,10 @@ def parse_args():
     parser.add_argument('--num_output', default=100, type=int, help='how many leaker do we want')
 
     parser.add_argument('--is_plot', default=True, type=bool)  # how to show statistics
-    parser.add_argument('--plot_idx', '--list', nargs='+', help='<Required> Set flag', required=True)
+    parser.add_argument('--plot_idx', nargs='+', type=int, defualt=0, help='which output feature to plot')
     parser.add_argument('--is_q', default=True, type=bool)
-    parser.add_argument('--q_idx', '--list', nargs='+', help='<Required> Set flag', required=True)
-    parser.add_argument('--q', '--list', nargs='+', help='<Required> Set flag', required=True)
+    parser.add_argument('--q_idx', nargs='+', type=int, default=0, help='which output feature to show')
+    parser.add_argument('--q', nargs='+', type=float, default=0.5, help='what quantile we interested in')
 
     parser.add_argument('--rs', default=12345678)  # running
 
@@ -40,6 +40,8 @@ def inner_product(image_fts, weights):
 def show_distribution(outputs, idxs):
     if idxs is int:
         plt.hist(outputs[:, idxs])
+    elif idxs is list and len(idxs) == 1:
+        plt.hist(outputs[:, idxs[0]])
     elif idxs is list and len(idxs) > 1:
         num = len(idxs)
 
@@ -97,6 +99,7 @@ if __name__ == '__main__':
 
     # get model
     encoder = ToyEncoder(input_resolution=resolution, downsampling_factor=args.downscaling, is_normalize=True)
+    encoder.eval()
     # we only consider normalized encoder, the ONLY variable is down-scaling, i.e, the output resolution.
 
     # get inner products
@@ -106,7 +109,7 @@ if __name__ == '__main__':
         if args.weight_mode == 'images':
             weight_imgs = encoder(ds_weights)
         else:
-            weight_images = None
+            weight_imgs = None
 
     weights = weights_generator(num_input=encoder.out_fts, num_output=args.num_output, mode=args.weight_mode,
                                 is_normalize=True, image_fts=weight_imgs)

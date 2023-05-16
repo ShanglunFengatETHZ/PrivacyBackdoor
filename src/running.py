@@ -48,8 +48,3 @@ def build_model(info_dataset, info_model, info_train, logger, save_path):
     torch.save(model, save_path)
 
 
-def extract_information(model_path, width, bias=0.0, scaling=1.0):
-    model = torch.load(model_path)
-    model.eval()
-    images = model.recovery(width)
-    plot_recovery(images, bias=bias, scaling=scaling)
