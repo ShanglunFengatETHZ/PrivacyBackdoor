@@ -2,7 +2,7 @@ import torch
 import matplotlib.pyplot as plt
 import argparse
 from model import ToyEncoder
-from data import load_dataset, get_subdataset, get_dataloader
+from data import load_dataset, get_subdataset
 import math
 
 from tools import weights_generator
@@ -10,125 +10,116 @@ from tools import weights_generator
 
 def parse_args():
     parser = argparse.ArgumentParser(description='INPUT the YOU want to test')
-    parser.add_argument('--weight', default="uniform")
-    parser.add_argument('--out_fts', default=100)
-    parser.add_argument('--dataset', default="cifar10")
-    parser.add_argument('--root', default=None)
-    parser.add_argument('--is_plot', default=True)
+
+    parser.add_argument('--root', type=str)
+    parser.add_argument('--dataset', default="cifar10")  # dataset
+    parser.add_argument('--fts_subset', default=0.1, type=float, help='use training set for generating features')
+    parser.add_argument('--bait_subset', default=0.01, type=float, help='use test set for generating weights')
+
+    parser.add_argument('--downscaling', default=None, type=float, help='control the downscaling factor of encoder')  # encoder
+
+    parser.add_argument('--weight_mode', default="uniform", type=str, help='how to generate weights in backdoor')  # backdoor
+    parser.add_argument('--num_output', default=100, type=int, help='how many leaker do we want')
+
+    parser.add_argument('--is_plot', default=True, type=bool)  # how to show statistics
     parser.add_argument('--plot_idx', '--list', nargs='+', help='<Required> Set flag', required=True)
-    parser.add_argument('--is_q', default=True)
+    parser.add_argument('--is_q', default=True, type=bool)
     parser.add_argument('--q_idx', '--list', nargs='+', help='<Required> Set flag', required=True)
     parser.add_argument('--q', '--list', nargs='+', help='<Required> Set flag', required=True)
-    parser.add_argument('--is_plot', default=True)
-    parser.add_argument('--subset', default=0.2)
-    parser.add_argument('--bait_subset', default=0.01)
-    parser.add_argument('--downscaling', default=None)
-    parser.add_argument('--bait', default='uniform')
-    parser.add_argument('--rs', default=12345678)
+
+    parser.add_argument('--rs', default=12345678)  # running
 
     return parser.parse_args()
 
 
-def generate_distribution(images, weights):
-    # images(num, num_features) @ weights(num_features, out_goal)
-    return images @ weights
+def inner_product(image_fts, weights):
+    # image_fts(num, num_features) @ weights(num_features, outputs)
+    return image_fts @ weights
 
 
-def show_distribution(samples_all, idxs):
-    # TODO: subplot for multiple outputs
-    if not isinstance(idxs, list):
-        plt.hist(samples_all[:, idxs])
-        plt.show()
-    else:
+def show_distribution(outputs, idxs):
+    if idxs is int:
+        plt.hist(outputs[:, idxs])
+    elif idxs is list and len(idxs) > 1:
         num = len(idxs)
+
         h = math.ceil(math.sqrt(num) * 6 / 5)  # h > w
         w = math.ceil(num / h)
         fig, axs = plt.subplots(h, w)
 
         for j in range(num):
             idx = idxs[j]
-            samples = samples_all[:, idx]
+            samples = outputs[:, idx]
 
             iw, ih = num // h, num % h
             axs[ih, iw].hist(samples)
-
-
-def cal_quantiles(samples, q):
-    qt = torch.tensor(q)
-    return torch.quantile(samples, qt, keepdim=False, interpolation='linear')
-
-
-def cal_allquantiles(samples_all, q, idxs=None):
-    qs_all = []
-    if idxs is None:
-        for j in range(samples_all.shape[1]):
-            qs = cal_quantiles(samples_all[:, j], q)
-            qs_all.append(qs)
     else:
-        for idx in idxs:
-            qs = cal_quantiles(samples_all[:, idx], q)
-            qs_all.append(qs)
+        assert False, 'Invalid output index'
+    plt.show()
 
-    return torch.stack(qs_all, dim=0)
+
+def cal_quantiles(outputs, idx, q):
+    # samples_all: num_sample * num_outputs
+    # idx: which output we use
+    # qs: list of quantiles we are interested in
+    q = torch.tensor(q)  # q should be a tensor or integer instead of list
+    return torch.quantile(outputs[idx], q, keepdim=False, interpolation='linear')
+
+
+def cal_allquantiles(outputs, idxs=None, q=0.5):
+    q_all = []
+    if idxs is int:
+        idxs = [idxs]
+    elif idxs is tuple:
+        idxs = list(idxs)
+    elif idxs is None:
+        idxs = torch.arange(outputs.shape[1])
+    else:
+        assert idxs is list, 'unrecognized idxs input'
+
+    for idx in idxs:
+        qs = cal_quantiles(outputs[:, idx], idx=idx, q=q)
+        q_all.append(qs)
+
+    return torch.stack(q_all, dim=0)  # outputs * quantile
 
 
 if __name__ == '__main__':
     # use training dataset for input, use test set for constructing.
     args = parse_args()
 
-    # get model
-    downscaling = args.downscaling
-    encoder = ToyEncoder(downsampling_factor=downscaling, is_normalize=True)
-
     # get dataset
-    dataset = args.dataset
-    root = args.root
-    ds_train, ds_test, _, _ = load_dataset(root, dataset)
-
-    assert isinstance(args.subset, float)
-    p = args.subset
     rs = args.rs
-    ds_code = get_subdataset(ds_train, p=p, random_seed=rs)
+    ds_train, ds_test, resolution, _ = load_dataset(args.root, args.dataset)
+    ds_fts = get_subdataset(ds_train, p=args.fts_subset, random_seed=rs)
+    # dl_fts = get_dataloader(ds_fts, batch_size=64, num_workers=4)
+    ds_weights = get_subdataset(ds_test, p=args.bait_subset, random_seed=rs)
 
-    assert isinstance(args.bait_subset, float)
-    p_bait = args.bait_subset
-    rs = args.rs
-    ds_weight = get_subdataset(ds_test, p=p_bait, random_seed=rs)
-
-    dl_code, dl_weight = get_dataloader(ds_code, ds_weight, batch_size=64, num_workers=4)
+    # get model
+    encoder = ToyEncoder(input_resolution=resolution, downsampling_factor=args.downscaling, is_normalize=True)
+    # we only consider normalized encoder, the ONLY variable is down-scaling, i.e, the output resolution.
 
     # get inner products
-    fts_code = []
-    fts_weight = []
-
     with torch.no_grad():
-        for X, _ in dl_code: # TODO: do we really need batch here?
-            ft_code = encoder(X)
-            fts_code.append(ft_code)
+        fts = encoder(ds_fts)
 
-        for X, _ in dl_weight:
-            ft_weight = encoder(X)
-            fts_weight.append(ft_weight)
+        if args.weight_mode == 'images':
+            weight_imgs = encoder(ds_weights)
+        else:
+            weight_images = None
 
-    fts_code = torch.cat(fts_code)
-    fts_weight = torch.cat(fts_weight)
+    weights = weights_generator(num_input=encoder.out_fts, num_output=args.num_output, mode=args.weight_mode,
+                                is_normalize=True, image_fts=weight_imgs)
 
-    in_fts = fts_code.shape[1]
-    out_fts = args.out_fts
-    mode = args.weight
-    weights = weights_generator(in_fts, out_fts, mode=mode, images=fts_weight)
-    samples = generate_distribution(fts_code, weights)
+    # calculate outputs we are interested in
+    outputs = inner_product(fts, weights)
 
     # show results
     if args.is_plot:
-        plot_idx = args.plot_idx
-        show_distribution(samples, plot_idx)
+        show_distribution(outputs, args.plot_idx)
 
     if args.is_q:
-        q_idx = args.q_idx
-        q = args.q
-        qts = cal_allquantiles(samples, q=q, idxs=q_idx)
-
-        print(q)
+        qts = cal_allquantiles(outputs, idxs=args.q_idx, q=args.q)
+        print('prob', *args.q, sep=",")
         for j in range(len(qts)):
-            print(qts[j])
+            print(f'idx:{j}', *(qts[j].tolist()), sep=",")
