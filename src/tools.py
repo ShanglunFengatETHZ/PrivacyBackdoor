@@ -31,7 +31,7 @@ def weights_generator(num_input, num_output, mode='uniform',
             weights = torch.nn.init.xavier_normal_(torch.empty(num_input, num_output))
         case 'images':
             assert isinstance(image_fts, torch.Tensor) and image_fts.dim() == 2, 'You should input legal images'
-            assert len(image_fts) < num_output, 'You should input more images'
+            assert len(image_fts) >= num_output, 'You should input more images'
             weights = torch.transpose(image_fts, 0, 1)[:, :num_output]  # every image corresponding with an output
         case 'fixed_sparse':
             weights = torch.zeros(num_input, num_output)
@@ -61,7 +61,7 @@ def plot_recovery(images, bias=(0.0, 0.0, 0.0), scaling=(1.0, 1.0, 1.0)):
         image = image.to('cpu')
         image_revise = (image + bias) * scaling
 
-        iw, ih = num // h, num % h
+        iw, ih = j // h, j % h
         axs[ih, iw].imshow(image_revise.permute(1, 2, 0))
 
 

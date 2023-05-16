@@ -20,7 +20,7 @@ def parse_args():
     parser.add_argument('--weight_mode', default="uniform", type=str, help='how to generate weights in backdoor')  # backdoor
     parser.add_argument('--num_output', default=100, type=int, help='how many leaker do we want')
 
-    parser.add_argument('--is_plot', default=True, type=bool)  # how to show statistics
+    parser.add_argument('--is_plot', default=False, type=bool)  # how to show statistics
     parser.add_argument('--plot_idx', nargs='+', type=int, default=0, help='which output feature to plot')
     parser.add_argument('--is_q', default=True, type=bool)
     parser.add_argument('--q_idx', nargs='+', type=int, default=0, help='which output feature to show')
@@ -52,19 +52,19 @@ def show_distribution(outputs, idxs):
             idx = idxs[j]
             samples = outputs[:, idx]
 
-            iw, ih = num // h, num % h
+            iw, ih = j // h, j % h
             axs[ih, iw].hist(samples)
     else:
         assert False, 'Invalid output index'
     plt.show()
 
 
-def cal_quantiles(outputs, idx, q):
+def cal_quantiles(outputs, q):
     # samples_all: num_sample * num_outputs
     # idx: which output we use
     # qs: list of quantiles we are interested in
     q = torch.tensor(q)  # q should be a tensor or integer instead of list
-    return torch.quantile(outputs[idx], q, keepdim=False, interpolation='linear')
+    return torch.quantile(outputs, q=q, keepdim=True, interpolation='linear')
 
 
 def cal_allquantiles(outputs, idxs=None, q=0.5):
@@ -81,7 +81,7 @@ def cal_allquantiles(outputs, idxs=None, q=0.5):
         assert isinstance(idxs, list), 'unrecognized idxs input'
 
     for idx in idxs:
-        qs = cal_quantiles(outputs[:, idx], idx=idx, q=q)
+        qs = cal_quantiles(outputs[:, idx], q=q)
         q_all.append(qs)
 
     return torch.stack(q_all, dim=0)  # outputs * quantile
@@ -117,14 +117,20 @@ def main():
     outputs = inner_product(fts, weights)
 
     # show results
+    print(f'samples:{len(outputs)}')
     if args.is_plot:
         show_distribution(outputs, args.plot_idx)
 
     if args.is_q:
         qts = cal_allquantiles(outputs, idxs=args.q_idx, q=args.q)
-        print('prob', *list(args.q), sep=",")
+
+        if isinstance(args.q, float):
+            print(f'prob,{args.q}')
+        else:
+            print('prob', *list(args.q), sep=",")
+
         for j in range(len(qts)):
-            print(f'idx:{j}', *(qts[j].tolist()), sep=",")
+            print(f'idx:{j}', *([q[0] for q in qts[j].tolist()]), sep=",")
 
 
 if __name__ == '__main__':
