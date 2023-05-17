@@ -49,6 +49,10 @@ def train_model(model, dataloaders, optimizer, logger, num_epochs, device):
                 running_loss += loss.item() * inputs.size(0)
                 running_corrects += torch.sum(preds.eq(labels.data))
 
+                # debug
+                logger.info(';'.join([str(lst) for lst in model.backdoor._update_last_step]))
+                model.backdoor.store_hooked_fish(inputs)
+
             epoch_loss = running_loss / len(dataloaders[phase].dataset)
             epoch_acc = float(running_corrects) / len(dataloaders[phase].dataset)
             logger.info('{} Loss: {:.4f} Acc: {:.4f}'.format(phase, epoch_loss, epoch_acc))

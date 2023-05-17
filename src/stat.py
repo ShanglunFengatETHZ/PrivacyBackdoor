@@ -18,6 +18,7 @@ def parse_args():
     parser.add_argument('--downscaling', default=None, type=float, help='control the downscaling factor of encoder')  # encoder
 
     parser.add_argument('--weight_mode', default="uniform", type=str, help='how to generate weights in backdoor')  # backdoor
+    parser.add_argument('--weight_factor', default=1.0, type=float, help='how large is the weight')
     parser.add_argument('--num_output', default=100, type=int, help='how many leaker do we want')
 
     parser.add_argument('--is_plot', default=False, type=bool)  # how to show statistics
@@ -95,7 +96,7 @@ def main():
     ds_train, ds_test, resolution, _ = load_dataset(args.root, args.dataset)
     ds_fts, _ = get_subdataset(ds_train, p=args.fts_subset, random_seed=rs)
     ds_weights, _ = get_subdataset(ds_test, p=args.bait_subset, random_seed=rs)
-    dl_fts, dl_weights = get_dataloader(ds0=ds_fts, ds1=ds_weights, batch_size = 64, num_workers = 2)
+    dl_fts, dl_weights = get_dataloader(ds0=ds_fts, ds1=ds_weights, batch_size=64, num_workers=2)
 
     # get model
     encoder = ToyEncoder(input_resolution=resolution, downsampling_factor=args.downscaling, is_normalize=True)
@@ -111,7 +112,7 @@ def main():
         weight_imgs = None
 
     weights = weights_generator(num_input=encoder.out_fts, num_output=args.num_output, mode=args.weight_mode,
-                                is_normalize=True, image_fts=weight_imgs)
+                                is_normalize=True, image_fts=weight_imgs, constant=args.weight_factor)
 
     # calculate outputs we are interested in
     outputs = inner_product(fts, weights)

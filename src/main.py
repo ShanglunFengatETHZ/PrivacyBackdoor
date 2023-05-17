@@ -14,7 +14,7 @@ def parse_args():
 
 
 def main():
-    args = parse_args()
+    args = parse_args() # TODO: quantile-detemined
 
     config_name = args.config_name
     parts = config_name.split('/')
@@ -55,4 +55,4 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    main()  # TODO: running on GPU

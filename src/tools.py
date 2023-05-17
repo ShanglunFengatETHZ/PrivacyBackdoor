@@ -27,7 +27,7 @@ def weights_generator(num_input, num_output, mode='uniform',
             weights = torch.rand(num_input, num_output)
         case 'gaussian':
             weights = torch.randn(num_input, num_output)
-        case 'classic': # classic initialization method for
+        case 'classic':  # classic initialization method for
             weights = torch.nn.init.xavier_normal_(torch.empty(num_input, num_output))
         case 'images':
             assert isinstance(image_fts, torch.Tensor) and image_fts.dim() == 2, 'You should input legal images'
@@ -45,24 +45,44 @@ def weights_generator(num_input, num_output, mode='uniform',
     return constant * weights
 
 
-def plot_recovery(images, bias=(0.0, 0.0, 0.0), scaling=(1.0, 1.0, 1.0)):
+def plot_recovery(images, bias=(0.0, 0.0, 0.0), scaling=(1.0, 1.0, 1.0), hw=None, inches=None):
     # images is a list of tensors 3 * w * h
     assert isinstance(images, list) and len(images) > 0, 'invalid input'
     num = len(images)
-    h = math.ceil(math.sqrt(num) * 6 / 5)  # h > w
-    w = math.ceil(num / h)
+    res_h, res_w = images[0].shape[1], images[0].shape[2]
+    if hw is None:
+        h = math.ceil(math.sqrt(num) * 6 / 5)  # h > w
+        w = math.ceil(num / h)
+    else:
+        h, w = hw
 
     fig, axs = plt.subplots(h, w)
-    bias = torch.tensor(bias)
-    scaling = torch.tensor(scaling)
 
-    for j in range(num):
-        image = images[j]
-        image = image.to('cpu')
-        image_revise = (image + bias) * scaling
+    if inches is None:
+        px = 1 / plt.rcParams['figure.dpi']
+        pic_h, pic_w = res_h * h * px, res_w * w * px
+        fig.set_size_inches(pic_h, pic_w)
+        print(f'picture: height:{pic_h}, width;{pic_w}')
+    else:
+        fig.set_size_inches(inches[0], inches[1])
 
+    bias = torch.tensor(bias).reshape(3, 1, 1)
+    scaling = torch.tensor(scaling).reshape(3, 1, 1)
+    for j in range(h * w):
         iw, ih = j // h, j % h
-        axs[ih, iw].imshow(image_revise.permute(1, 2, 0))
+        if j < num:
+            image = images[j]
+            image = image.to('cpu')
+            image_revise = (image + bias) * scaling
+        else:
+            image_revise = torch.zeros(3, res_h, res_w)
+        ax = axs[ih, iw].imshow(image_revise.permute(1, 2, 0))
+        ax.axes.get_yaxis().set_visible(False)
+        ax.axes.get_xaxis().set_visible(False)
+
+    plt.axis('off')
+    fig.subplots_adjust(wspace=0, hspace=0)
+    plt.show()
 
 
 def pass_forward(net, dataloader):
@@ -72,3 +92,14 @@ def pass_forward(net, dataloader):
             ft = net(X)
             fts.append(ft)
     return torch.cat(fts)
+
+
+def which_images_activate_this_door(signal):
+    # signal: samples * doors
+    idx_nonzero = torch.nonzero(signal > 0)
+    activators_doors = []
+    for j in range(signal.shape[1]):
+        activators = idx_nonzero[idx_nonzero[:, 1] == j][:, 0]
+        activators = activators.tolist()
+        activators_doors.append(activators)
+    return activators_doors
