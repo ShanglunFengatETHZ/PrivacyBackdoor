@@ -44,16 +44,19 @@ def train_model(model, dataloaders, optimizer, logger, num_epochs, device):
                         # backward propagation
                         loss.backward()
                         optimizer.step()
+                        # logger.info(';'.join([str(lst) for lst in model.backdoor._update_last_step]))
+                        model.backdoor.store_hooked_fish(inputs)
 
                 # statistics
                 running_loss += loss.item() * inputs.size(0)
                 running_corrects += torch.sum(preds.eq(labels.data))
 
                 # debug
-                logger.info(';'.join([str(lst) for lst in model.backdoor._update_last_step]))
-                model.backdoor.store_hooked_fish(inputs)
 
+
+            # debug
             epoch_loss = running_loss / len(dataloaders[phase].dataset)
             epoch_acc = float(running_corrects) / len(dataloaders[phase].dataset)
             logger.info('{} Loss: {:.4f} Acc: {:.4f}'.format(phase, epoch_loss, epoch_acc))
+            logger.info(str(model.backdoor._activate_frequency.tolist()))
     return model.to('cpu')

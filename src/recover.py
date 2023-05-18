@@ -20,7 +20,7 @@ def extract_information(model_path, bias=(0.0, 0.0, 0.0), scaling=(1.0, 1.0, 1.0
     model = torch.load(model_path)
     model.eval()
     if plot_weights:
-        images = model.backdoor.show_weights()
+        images = model.backdoor.show_initial_weights_as_images()
         plot_recovery(images, bias=bias, scaling=scaling, hw=hw, inches=inches)
     else:
         images = model.backdoor.recovery()
