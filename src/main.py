@@ -14,7 +14,7 @@ def parse_args():
 
 
 def main():
-    args = parse_args() # TODO: 1.quantile-detemined
+    args = parse_args()
 
     config_name = args.config_name
     parts = config_name.split('/')

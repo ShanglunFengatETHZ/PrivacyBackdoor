@@ -61,7 +61,6 @@ class Backdoor(nn.Module):  # backdoor has to have the method recovery for leaki
         # parameters for debugging
         self._update_last_step = []  # in this batch, which picture activates this door
         self._stored_hooked_fish = []  # used for storing raw pictures tha should be shown
-        self._activate_frequency = torch.zeros(self.num_output)  # how many times has this neuron been activated from start
 
     def recovery(self, width) -> list:
         pics = []
@@ -81,6 +80,9 @@ class ToyBackdoor(Backdoor):
         super(ToyBackdoor, self).__init__(num_input, num_output)
 
         self.bias_scaling = nn.Parameter(torch.tensor(bias_scaling), requires_grad=False)
+        self._activate_frequency = torch.zeros(self.num_output)  # how many times has this neuron been activated from start
+        self._is_mixture = (torch.zeros(self.num_output) > 1.0)  # whether two images activate this bin at a time
+        self._total_replica_within_same_batch = 0
 
     def forward(self, features):
         # features: num_samples * out_fts
@@ -97,7 +99,7 @@ class ToyBackdoor(Backdoor):
 
         self.weights = nn.Parameter(weights, requires_grad=True)
         self._stored_weights = weights.detach().clone()
-        self._stored_weights.requires_grad = False
+        self._stored_weights.requires_grad = False  # this is the upper bound for replication
 
     def castbait_bias(self, bias):
         assert isinstance(bias, torch.Tensor), 'bias b has to be a tensor'
@@ -147,12 +149,17 @@ class ToyBackdoor(Backdoor):
 
     def store_hooked_fish(self, inputs):
         good_images = []
+
         for j in range(len(self._update_last_step)):
             image_this_door = self._update_last_step[j]
             if len(image_this_door) == 1:
                 good_images.append(image_this_door[0])
                 self._activate_frequency[j] += 1
+            elif len(image_this_door) > 1:
+                self._is_mixture[j] = True
+
         good_images_unique = list(set(good_images))
+        self._total_replica_within_same_batch += (len(good_images) - len(good_images_unique))
         for j in range(len(good_images_unique)):
             self._stored_hooked_fish.append(inputs[good_images_unique[j]])
 

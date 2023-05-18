@@ -24,7 +24,7 @@ def build_model(info_dataset, info_model, info_train, logger, save_path):
     ln_weight_factor, ln_bias_factor = info_ln.get('WEIGHT_FACTOR', 1.0), info_ln.get('BIAS_FACTOR', 0.0)  # linear probe
 
     batch_size, num_workers = info_train.get('BATCH_SIZE', 64), info_train.get('NUM_WORKERS', 2)  # training
-    learning_rate, num_epochs, device = info_train.get('LR', 0.1), info_train.get('EPOCH', 10), info_train.get('DEVICE', 'cpu')
+    learning_rate, num_epochs, device, verbose = info_train.get('LR', 0.1), info_train.get('EPOCH', 10), info_train.get('DEVICE', 'cpu'), info_train.get('VERBOSE', False)
 
     # coordinate dataset
     train_dataset, test_dataset, resolution, classes = load_dataset(ds_path, ds_name)
@@ -55,5 +55,5 @@ def build_model(info_dataset, info_model, info_train, logger, save_path):
                             ln_weight_factor=ln_weight_factor, ln_bias_factor=ln_bias_factor)
 
     optimizer = get_optimizer(model, learning_rate)
-    model = train_model(model, dataloaders=dataloaders, optimizer=optimizer, num_epochs=num_epochs, device=device, logger=logger)
+    model = train_model(model, dataloaders=dataloaders, optimizer=optimizer, num_epochs=num_epochs, device=device, logger=logger, verbose=verbose)
     torch.save(model, save_path)

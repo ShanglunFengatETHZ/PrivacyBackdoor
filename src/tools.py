@@ -96,7 +96,7 @@ def pass_forward(net, dataloader):
 
 def which_images_activate_this_door(signal):
     # signal: samples * doors
-    idx_nonzero = torch.nonzero(signal > 0)
+    idx_nonzero = torch.nonzero(signal > 0.0)
     activators_doors = []
     for j in range(signal.shape[1]):
         activators = idx_nonzero[idx_nonzero[:, 1] == j][:, 0]

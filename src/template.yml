@@ -1,0 +1,41 @@
+RANDOM_SEED: 12345678
+
+DATASET:
+  NAME: 'cifar10' # 'cifar100', 'imagenet'
+  ROOT: '../../cifar10'
+  SUBSET: null
+  SUBSET_FOR_WEIGHT: null
+  SUBSET_FOR_ESTIMATE: null
+
+
+MODEL:
+  ENCODER:
+    DOWNSAMPLING_FACTOR: null
+    USE_NORMALIZE: True
+    SCALING: 1.0
+  BACKDOOR:
+    NUM_LEAKER: 64
+    C: 100.0
+    WEIGHT_MODE: 'uniform' # 'images', , 'gaussian', 'classic'
+    USE_NORMALIZE: True
+    WEIGHT_FACTOR: 1.0
+    BIAS_MODE: 'constant' # 'quantile'
+    BIAS_CONSTANT: null
+    QUANTILE: null
+
+
+  LN:
+    WEIGHT_MODE: 'fixed_sparse' # not used in easy net setting
+    WEIGHT_FACTOR: 1.0
+    BIAS_FACTOR: 0.0
+
+TRAIN:
+  BATCH_SIZE: 64
+  NUM_WORKERS: 2
+  LR: 0.1
+  EPOCH: 1
+  DEVICE: 'cpu'
+  VERBOSE: False
+
+
+SAVE_PATH: './weights/*.pth'
