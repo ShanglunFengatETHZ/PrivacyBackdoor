@@ -1,5 +1,6 @@
 import torch
 import matplotlib.pyplot as plt
+import matplotlib
 import argparse
 from model import ToyEncoder
 from data import load_dataset, get_subdataset, get_dataloader
@@ -12,14 +13,14 @@ def parse_args():
 
     parser.add_argument('--root', type=str)
     parser.add_argument('--dataset', default="cifar10")  # dataset
-    parser.add_argument('--fts_subset', default=0.1, type=float, help='use training set for generating features')
-    parser.add_argument('--bait_subset', default=0.01, type=float, help='use test set for generating weights')
+    parser.add_argument('--fts_subset', default=0.2, type=float, help='use training set for generating features')
+    parser.add_argument('--bait_subset', default=0.0064, type=float, help='use test set for generating weights')
 
     parser.add_argument('--downscaling', default=None, type=float, help='control the downscaling factor of encoder')  # encoder
 
     parser.add_argument('--weight_mode', default="uniform", type=str, help='how to generate weights in backdoor')  # backdoor
     parser.add_argument('--weight_factor', default=1.0, type=float, help='how large is the weight')
-    parser.add_argument('--num_output', default=100, type=int, help='how many leaker do we want')
+    parser.add_argument('--num_output', default=64, type=int, help='how many leaker do we want')
 
     parser.add_argument('--is_plot', default=False, type=bool)  # how to show statistics
     parser.add_argument('--plot_idx', nargs='+', type=int, default=0, help='which output feature to plot')
@@ -28,6 +29,7 @@ def parse_args():
     parser.add_argument('--q', nargs='+', type=float, default=0.5, help='what quantile we interested in')
 
     parser.add_argument('--rs', default=12345678)  # running
+    parser.add_argument('--hw', nargs='+', type=int, default=None)
 
     return parser.parse_args()
 
@@ -37,7 +39,7 @@ def inner_product(image_fts, weights):
     return image_fts @ weights
 
 
-def show_distribution(outputs, idxs):
+def show_distribution(outputs, idxs, hw=None):
     if isinstance(idxs, int):
         plt.hist(outputs[:, idxs])
     elif isinstance(idxs, list) and len(idxs) == 1:
@@ -45,18 +47,28 @@ def show_distribution(outputs, idxs):
     elif isinstance(idxs, list) and len(idxs) > 1:
         num = len(idxs)
 
-        h = math.ceil(math.sqrt(num) * 6 / 5)  # h > w
-        w = math.ceil(num / h)
+        if hw is None:
+            h = math.ceil(math.sqrt(num) * 6 / 5)  # h > w
+            w = math.ceil(num / h)
+        else:
+            h, w = hw
+
         fig, axs = plt.subplots(h, w)
 
         for j in range(num):
             idx = idxs[j]
             samples = outputs[:, idx]
+            ih, iw = j % h, j // h
+            axs[ih, iw].set_title(f'backdoor {idx}')
+            axs[ih, iw].hist(samples, density=True)
 
-            iw, ih = j // h, j % h
-            axs[ih, iw].hist(samples)
+            axs[ih, iw].xaxis.set_tick_params(labelsize=8)
+            axs[ih, iw].yaxis.set_tick_params(labelsize=8)
+
     else:
         assert False, 'Invalid output index'
+
+    plt.tight_layout()
     plt.show()
 
 
@@ -120,18 +132,18 @@ def main():
     # show results
     print(f'samples:{len(outputs)}')
     if args.is_plot:
-        show_distribution(outputs, args.plot_idx)
+        show_distribution(outputs, args.plot_idx, hw=args.hw)
 
     if args.is_q:
         qts = cal_allquantiles(outputs, idxs=args.q_idx, q=args.q)
 
         if isinstance(args.q, float):
-            print(f'prob,{args.q}')
+            print(f'prob,{round(args.q,4)}')
         else:
             print('prob', *list(args.q), sep=",")
 
         for j in range(len(qts)):
-            print(f'idx:{j}', *([q[0] for q in qts[j].tolist()]), sep=",")
+            print(f'idx:{j}', *([round(q[0], 4) for q in qts[j].tolist()]), sep=",")
 
 
 if __name__ == '__main__':

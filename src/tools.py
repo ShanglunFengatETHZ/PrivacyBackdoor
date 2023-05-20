@@ -45,7 +45,7 @@ def weights_generator(num_input, num_output, mode='uniform',
     return constant * weights
 
 
-def plot_recovery(images, bias=(0.0, 0.0, 0.0), scaling=(1.0, 1.0, 1.0), hw=None, inches=None):
+def plot_recovery(images, bias=(0.0, 0.0, 0.0), scaling=(1.0, 1.0, 1.0), hw=None, inches=None, save_path=None):
     # images is a list of tensors 3 * w * h
     assert isinstance(images, list) and len(images) > 0, 'invalid input'
     num = len(images)
@@ -82,7 +82,12 @@ def plot_recovery(images, bias=(0.0, 0.0, 0.0), scaling=(1.0, 1.0, 1.0), hw=None
 
     plt.axis('off')
     fig.subplots_adjust(wspace=0, hspace=0)
+    if save_path is not None:
+        plt.savefig(save_path)
+
     plt.show()
+
+
 
 
 def pass_forward(net, dataloader):
