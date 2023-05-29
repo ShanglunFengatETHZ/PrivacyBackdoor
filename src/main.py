@@ -14,6 +14,7 @@ def parse_args():
 
 
 def main():
+    # TODO: use dictionary to make the parameters of make net more clearer
     args = parse_args()
 
     config_name = args.config_name

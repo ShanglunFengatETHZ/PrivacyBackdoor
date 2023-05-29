@@ -20,9 +20,11 @@ def setdiff1d(n, idx):
 
 def weights_generator(num_input, num_output, mode='uniform',
                       is_normalize=True, constant=1.0,
-                      image_fts=None):
+                      image_fts=None, **kwargs):
     # image_fts: num_sample * num_features
     match mode:
+        case 'eye':
+            weights = torch.eye(num_input, num_output)
         case 'uniform':
             weights = torch.rand(num_input, num_output)
         case 'gaussian':
@@ -88,8 +90,6 @@ def plot_recovery(images, bias=(0.0, 0.0, 0.0), scaling=(1.0, 1.0, 1.0), hw=None
     plt.show()
 
 
-
-
 def pass_forward(net, dataloader):
     fts = []
     with torch.no_grad():
@@ -99,9 +99,12 @@ def pass_forward(net, dataloader):
     return torch.cat(fts)
 
 
-def which_images_activate_this_door(signal):
+def which_images_activate_this_door(signal, thres_func=None):
     # signal: samples * doors
-    idx_nonzero = torch.nonzero(signal > 0.0)
+    if thres_func is None:
+        idx_nonzero = torch.nonzero(signal > 0.0)
+    else:
+        idx_nonzero = torch.nonzero(thres_func(signal))
     activators_doors = []
     for j in range(signal.shape[1]):
         activators = idx_nonzero[idx_nonzero[:, 1] == j][:, 0]

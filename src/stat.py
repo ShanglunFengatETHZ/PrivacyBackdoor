@@ -1,12 +1,11 @@
 import torch
 import matplotlib.pyplot as plt
-import matplotlib
 import argparse
 from model import ToyEncoder
 from data import load_dataset, get_subdataset, get_dataloader
 import math
 from tools import weights_generator, pass_forward
-
+import torch.nn.functional as F
 
 def parse_args():
     parser = argparse.ArgumentParser(description='INPUT the YOU want to test')
@@ -18,9 +17,11 @@ def parse_args():
 
     parser.add_argument('--downscaling', default=None, type=float, help='control the downscaling factor of encoder')  # encoder
 
-    parser.add_argument('--weight_mode', default="uniform", type=str, help='how to generate weights in backdoor')  # backdoor
+    parser.add_argument('--weight_mode', default="gaussian", type=str, help='how to generate weights in backdoor')  # backdoor
     parser.add_argument('--weight_factor', default=1.0, type=float, help='how large is the weight')
     parser.add_argument('--num_output', default=64, type=int, help='how many leaker do we want')
+    parser.add_argument('--is_weight_normalize', default=False, type=bool, help='whether the weight is normalized')
+    parser.add_argument('--tanh_bias', default=False, type=float, help='input float then show the results of tanh cut')
 
     parser.add_argument('--is_plot', default=False, type=bool)  # how to show statistics
     parser.add_argument('--plot_idx', nargs='+', type=int, default=0, help='which output feature to plot')
@@ -124,10 +125,12 @@ def main():
         weight_imgs = None
 
     weights = weights_generator(num_input=encoder.out_fts, num_output=args.num_output, mode=args.weight_mode,
-                                is_normalize=True, image_fts=weight_imgs, constant=args.weight_factor)
+                                is_normalize=args.is_weight_normalize, image_fts=weight_imgs, constant=args.weight_factor)
 
     # calculate outputs we are interested in
     outputs = inner_product(fts, weights)
+    if args.tanh_bias:
+        outputs = F.tanh(10.0 * (outputs + args.tanh_bias))
 
     # show results
     print(f'samples:{len(outputs)}')
