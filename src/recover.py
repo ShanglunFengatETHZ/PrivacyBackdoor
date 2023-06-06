@@ -29,7 +29,7 @@ def extract_information(model_path, bias=(0.0, 0.0, 0.0), scaling=(1.0, 1.0, 1.0
         images = model.backdoor.recovery()
         plot_recovery(images, bias=bias, scaling=scaling, hw=hw, inches=inches, save_path=save_path)
     elif plot_mode == 'raw':
-        plot_recovery(images_ref, hw=hw, inches=inches, save_path=save_path)
+        plot_recovery(images_ref, hw=hw, inches=inches, save_path=save_path, scaling=scaling, bias=bias)
     else:
         assert False, 'please input the correct plot mode'
 

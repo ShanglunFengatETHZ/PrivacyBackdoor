@@ -390,9 +390,9 @@ class LNRegistrar(Registrar):
 
     def find_backdoor_activated(self, is_once):
         if is_once:
-            idx = torch.nonzero(self.is_activate.sum(dim=-1) == 1).squeeze()
+            idx = torch.nonzero(self.is_activate.sum(dim=-1) == 1).reshape(-1)
         else:
-            idx = torch.nonzero(self.is_activate.sum(dim=-1) > 1).squeeze()
+            idx = torch.nonzero(self.is_activate.sum(dim=-1) > 1).reshape(-1)
         return idx
 
 
@@ -409,9 +409,9 @@ class ConvRegistrar(Registrar):
 
     def find_backdoor_activated(self, is_once=False):
         if is_once:
-            idx = torch.nonzero(self.is_activate.sum(dim=(1, 2, 3)) == 1).squeeze()
+            idx = torch.nonzero(self.is_activate.sum(dim=(1, 2, 3)) == 1).reshape(-1)
         else:
-            idx = torch.nonzero(self.is_activate.sum(dim=(1, 2, 3)) > 1).squeeze()
+            idx = torch.nonzero(self.is_activate.sum(dim=(1, 2, 3)) > 1).reshape(-1)
         return idx
 
     def fts_activate_this_door(self, idx):

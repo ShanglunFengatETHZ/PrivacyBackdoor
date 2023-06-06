@@ -176,6 +176,7 @@ def plot_recovery(images, bias=(0.0, 0.0, 0.0), scaling=(1.0, 1.0, 1.0), hw=None
             image = images[j]
             image = image.to('cpu')
             image_revise = image * scaling + bias
+            print(f'max:{image_revise.max().item()}, min:{image_revise.min().item()}')
         else:
             image_revise = torch.zeros(3, res_h, res_w)
         ax = axs[ih, iw].imshow(image_revise.permute(1, 2, 0))
