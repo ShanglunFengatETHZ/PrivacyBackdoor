@@ -45,7 +45,7 @@ def train_model(model, dataloaders, optimizer, logger, num_epochs, device, verbo
                         loss.backward()
                         optimizer.step()
                         if verbose:
-                            logger.info(';'.join([str(lst) for lst in model.backdoor._update_last_step]))
+                            logger.info(model.backdoor.registrar.print_update_this_step())
                         model.backdoor.store_hooked_fish(inputs)
 
                 # statistics
@@ -54,12 +54,12 @@ def train_model(model, dataloaders, optimizer, logger, num_epochs, device, verbo
 
                 # debug
 
-
             # debug
             epoch_loss = running_loss / len(dataloaders[phase].dataset)
             epoch_acc = float(running_corrects) / len(dataloaders[phase].dataset)
             logger.info('{} Loss: {:.4f} Acc: {:.4f}'.format(phase, epoch_loss, epoch_acc))
-            logger.info('activation times for each door'+str(model.backdoor._activate_frequency.tolist()))
-            logger.info('doors that been activated more than once at a time'+str(model.backdoor._is_mixture.tolist()))
-            logger.info('upper bound of replicate images'+str(model.backdoor._total_replica_within_same_batch))
+            if model.backdoor.registrar.is_log:
+                logger.info('activation times for each door'+str(model.backdoor.registrar.valid_activate_freq.tolist()))
+                logger.info('doors that been activated more than once at a time'+str(model.backdoor.registrar.is_mixture.tolist()))
+
     return model.to('cpu')

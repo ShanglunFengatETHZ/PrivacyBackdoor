@@ -5,7 +5,7 @@ import torchvision.transforms as transforms
 from tools import setdiff1d
 
 
-def load_dataset(root, dataset):
+def load_dataset(root, dataset, is_normalize=False):
     if dataset == 'cifar100':
         train_dataset = datasets.CIFAR100(root, train=True, transform=transforms.ToTensor(), download=False)
         test_dataset = datasets.CIFAR100(root, train=False, transform=transforms.ToTensor(), download=False)
@@ -17,8 +17,10 @@ def load_dataset(root, dataset):
         resolution = 224
         classes = 1000
     else:
-        train_dataset = datasets.CIFAR10(root, train=True, transform=transforms.ToTensor(), download=False)
-        test_dataset = datasets.CIFAR10(root, train=False, transform=transforms.ToTensor(), download=False)
+        transform_cifar10 = transforms.ToTensor() if is_normalize is False else transforms.Compose([transforms.ToTensor(),
+                                                                                                    transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))])
+        train_dataset = datasets.CIFAR10(root, train=True, transform=transform_cifar10, download=False)
+        test_dataset = datasets.CIFAR10(root, train=False, transform=transform_cifar10, download=False)
         resolution = 32
         classes = 10
 

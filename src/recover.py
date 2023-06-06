@@ -13,13 +13,14 @@ def parse_args():
     parser.add_argument('--scaling', nargs='+', type=float, default=(1.0, 1.0, 1.0))
     parser.add_argument('--save_path', type=str, default=None)
 
+    # if data normalize, bias=(0.,0.,0.), scaling=(32.0, 32.0, 32.0); if not, bias=(0.5, 0.5, 0.5) scaling=(16sqrt(2), 16sqrt(2), 16sqrt(2))
     return parser.parse_args()
 
 
 def extract_information(model_path, bias=(0.0, 0.0, 0.0), scaling=(1.0, 1.0, 1.0), hw=None, inches=None, plot_mode='recovery', save_path=None):
     model = torch.load(model_path)
     model.eval()
-    images_ref = model.backdoor._stored_hooked_fish
+    images_ref = model.backdoor._stored_hooked_fishes
     print(f'there are total {len(images_ref)} raw images that could be possible to extract')
     if plot_mode == 'weights':
         images = model.backdoor.show_initial_weights_as_images()
