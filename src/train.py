@@ -8,7 +8,8 @@ def get_optimizer(model, lr=0.1):
     return SGD(params=params, lr=lr)
 
 
-def train_model(model, dataloaders, optimizer, logger, num_epochs, device, verbose=False):
+def train_model(model, dataloaders, optimizer, logger, num_epochs, device, verbose=False,
+                toy_model=True, direct_resize=None):
     # only adjust device in this function
     model = model.to(device)
     loss_func = nn.CrossEntropyLoss()
@@ -29,6 +30,11 @@ def train_model(model, dataloaders, optimizer, logger, num_epochs, device, verbo
             # Iterate over data.
             for i, this_batch in enumerate(dataloader):
                 inputs, labels = this_batch
+                if direct_resize is not None:
+                    big_inputs = torch.zeros(inputs.shape[0], inputs.shape[1], direct_resize, direct_resize)
+                    big_inputs[:, :, 0:inputs.shape[2], 0:inputs.shape[3]] = inputs
+                    inputs = big_inputs
+
                 inputs = inputs.to(device)
                 labels = labels.to(device)
 
@@ -44,9 +50,11 @@ def train_model(model, dataloaders, optimizer, logger, num_epochs, device, verbo
                         # backward propagation
                         loss.backward()
                         optimizer.step()
-                        if verbose:
-                            logger.info(model.backdoor.registrar.print_update_this_step())
-                        model.backdoor.store_hooked_fish(inputs)
+
+                        if toy_model:
+                            if verbose:
+                                logger.info(model.backdoor.registrar.print_update_this_step())
+                            model.backdoor.store_hooked_fish(inputs)
 
                 # statistics
                 running_loss += loss.item() * inputs.size(0)
@@ -58,8 +66,10 @@ def train_model(model, dataloaders, optimizer, logger, num_epochs, device, verbo
             epoch_loss = running_loss / len(dataloaders[phase].dataset)
             epoch_acc = float(running_corrects) / len(dataloaders[phase].dataset)
             logger.info('{} Loss: {:.4f} Acc: {:.4f}'.format(phase, epoch_loss, epoch_acc))
-            if model.backdoor.registrar.is_log:
-                logger.info('activation times for each door'+str(model.backdoor.registrar.valid_activate_freq.tolist()))
-                logger.info('doors that been activated more than once at a time'+str(model.backdoor.registrar.is_mixture.tolist()))
+
+            if toy_model:
+                if model.backdoor.registrar.is_log:
+                    logger.info('activation times for each door'+str(model.backdoor.registrar.valid_activate_freq.tolist()))
+                    logger.info('doors that been activated more than once at a time'+str(model.backdoor.registrar.is_mixture.tolist()))
 
     return model.to('cpu')

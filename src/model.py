@@ -672,7 +672,7 @@ def make_an_toy_net(input_resolution=32, num_class=10,  # background
     # twin_track_backdoor_details = {segmentor_type, segmentor_scaling_constant, is_seg2bkd_native, seg2bkd_details, seg_weight_mode, seg_weight_details, seg_bias_mode, seg_bias_details}
 
     encoder = ToyEncoder(input_resolution=input_resolution, **encoder_details)
-    fts_encoder = encoder.out_fts
+    fts_encoder = encoder.out_fts[0]
 
     if use_twin_track_backdoor and isinstance(twin_track_backdoor_details, dict):
         backdoor = TwinTrackBackdoor(num_input=fts_encoder, num_output=num_leaker, bias_scaling=bias_scaling, activation=activation)
@@ -706,7 +706,7 @@ def make_conv_net(input_resolution=32, num_classes=10,
         images_details = backdoor_weight_details.get('images_details', {})
         stride, padding = images_details.get('stride', 1), images_details.get('padding', 0)
         mode, dl_images_bait = images_details.get('mode', None), images_details['dl_bait_images']
-        images_bait = dl2tensor(dl_images_bait)
+        images_bait, = dl2tensor(dl_images_bait)
         print(f'mode for extracting image bait is {mode}')
         selected_images = select_bait_images(images=images_bait, num_selected=num_leaker, mode=mode)
 

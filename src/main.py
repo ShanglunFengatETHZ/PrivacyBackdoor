@@ -55,4 +55,5 @@ def main():
 
 
 if __name__ == '__main__':
+    # TODO: building bait according to co-matrix that baits are different to other bait as far as possible
     main()  # TODO: running on GPU

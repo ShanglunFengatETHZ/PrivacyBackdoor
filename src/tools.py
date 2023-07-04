@@ -1,6 +1,7 @@
 import torch
 import matplotlib.pyplot as plt
 import math
+from operator import itemgetter
 
 
 def setdiff1d(n, idx):
@@ -60,11 +61,13 @@ def weights_generator(num_input, num_output, mode='uniform',
 
 
 def dl2tensor(dl):
-    images = []
+    images, labels = [], []
     for image, label in dl:
         images.append(image)
+        labels.append(label)
     images = torch.cat(images)
-    return images
+    labels = torch.cat(labels)
+    return images, labels
 
 
 def cal_upper_left_variance(images):
@@ -105,6 +108,7 @@ def extract_images_by_metrics(images, mode='var', topk_selected=None, selection_
 
 # TODO: select a group of images which have long distance from each other
 
+
 def select_bait_images(images, num_selected, mode=None):
     if mode is None:
         idxs_selected = torch.multinomial(torch.ones(len(images)), num_selected)
@@ -113,7 +117,7 @@ def select_bait_images(images, num_selected, mode=None):
         idxs_selected = extract_images_by_metrics(images, mode='var', topk_selected=num_selected)
         return images[idxs_selected]
     elif mode == 'mirror_symmetry':
-        thres_quantile = 0.2
+        thres_quantile = 0.75
         assert (1.0 - thres_quantile) * len(images) > num_selected, 'max threshold is not small enough'
         idxs_max_thres = extract_images_by_metrics(images, mode='var', selection_quantile=thres_quantile)
 
@@ -147,11 +151,12 @@ def conv_weights_generator(in_channels, out_channels,  window_size,
     return constant * weights
 
 
-def plot_recovery(images, bias=(0.0, 0.0, 0.0), scaling=(1.0, 1.0, 1.0), hw=None, inches=None, save_path=None):
-    # images is a list of tensors 3 * w * h
+def plot_recovery(images, bias=(0.0, 0.0, 0.0), scaling=(1.0, 1.0, 1.0), hw=None, inches=None, save_path=None, plot_gray=False):
+    # images is a list of tensors 3 * w * h or w * h
+
     assert isinstance(images, list) and len(images) > 0, 'invalid input'
     num = len(images)
-    res_h, res_w = images[0].shape[1], images[0].shape[2]
+    res_h, res_w = images[0].shape[-2], images[0].shape[-1]
     if hw is None:
         h = math.ceil(math.sqrt(num) * 6 / 5)  # h > w
         w = math.ceil(num / h)
@@ -168,8 +173,13 @@ def plot_recovery(images, bias=(0.0, 0.0, 0.0), scaling=(1.0, 1.0, 1.0), hw=None
     else:
         fig.set_size_inches(inches[0], inches[1])
 
-    bias = torch.tensor(bias).reshape(3, 1, 1)
-    scaling = torch.tensor(scaling).reshape(3, 1, 1)
+    if not plot_gray:
+        bias = torch.tensor(bias).reshape(3, 1, 1)
+        scaling = torch.tensor(scaling).reshape(3, 1, 1)
+    else:
+        bias = float(bias)
+        scaling = float(scaling)
+
     for j in range(h * w):
         iw, ih = j // h, j % h
         if j < num:
@@ -178,12 +188,21 @@ def plot_recovery(images, bias=(0.0, 0.0, 0.0), scaling=(1.0, 1.0, 1.0), hw=None
             image_revise = image * scaling + bias
             print(f'max:{image_revise.max().item()}, min:{image_revise.min().item()}')
         else:
-            image_revise = torch.zeros(3, res_h, res_w)
-        ax = axs[ih, iw].imshow(image_revise.permute(1, 2, 0))
+            if plot_gray:
+                image_revise = torch.zeros(res_h, res_w)
+            else:
+                image_revise = torch.zeros(3, res_h, res_w)
+
+        if plot_gray:
+            ax = axs[ih, iw].imshow(image_revise, cmap='gray')
+        else:
+            ax = axs[ih, iw].imshow(image_revise.permute(1, 2, 0))
+
         ax.axes.get_yaxis().set_visible(False)
         ax.axes.get_xaxis().set_visible(False)
 
     plt.axis('off')
+    plt.tight_layout()
     fig.subplots_adjust(wspace=0, hspace=0)
     if save_path is not None:
         plt.savefig(save_path)
@@ -198,6 +217,32 @@ def pass_forward(net, dataloader):
             ft = net(X)
             fts.append(ft)
     return torch.cat(fts)
+
+
+def large_add_small(u, beta):
+    cal_std = lambda x: torch.sqrt(torch.mean((x-torch.mean(x))**2))
+    normalize = lambda x: (x - torch.mean(x)) / cal_std(x)
+
+    avg_value = torch.mean(beta)
+    sd_value = cal_std(beta)
+
+    z = u + beta
+    return normalize(z) * sd_value + avg_value
+
+
+def test_large_add_small(num_length, num_clean, C=1000, is_double=False):
+    u = torch.randn(num_length)
+    beta = torch.zeros(num_length)
+    beta[num_clean:num_length] = C
+
+    if is_double:
+        u = u.double()
+        beta = beta.double()
+
+    output = large_add_small(u, beta)
+    u_new = output[:num_clean]
+    v_new = output[num_clean:] - C
+    return u, torch.cat([u_new, v_new])
 
 
 def which_images_activate_this_door(signal, thres_func=None):
@@ -283,3 +328,37 @@ def reshape_weight_to_sub_image(weight, image_channel, image_height, image_width
     images = images.permute(0, 5, 1, 3, 2, 4)
     images = images.reshape(num_output, image_channel, image_height, image_width)
     return images
+
+
+def find_different_classes(similarity, tr_labels, q=0.0, is_sort=False, is_print=True):
+    all_classes = set([0, 1, 2, 3, 4, 5, 6, 7, 8, 9])
+    similarity_quantile = torch.quantile(similarity, q=q, dim=-1, keepdim=False)
+
+    possible_lst = []
+    for idx_bait in range(len(similarity)):
+        similarity_this_bait = similarity[idx_bait]
+        is_activate = (similarity_this_bait > similarity_quantile[idx_bait])
+        act_label = set(tr_labels[is_activate].tolist())
+        inact_label = all_classes.difference(act_label)
+        if len(act_label) < 10:
+            possible_lst.append({'idx_bait': idx_bait, 'quantile': similarity_quantile[idx_bait], 'activated_classes':act_label, 'inactivated_classes':inact_label, 'num_activated_classes':len(act_label)})
+
+    if is_sort:
+        activate_classes_this_bait = sorted(possible_lst, key=itemgetter('num_activated_classes', 'idx_bait'))
+    else:
+        activate_classes_this_bait = possible_lst
+
+    if is_print:
+        for j in range(len(activate_classes_this_bait)):
+            print(activate_classes_this_bait[j])
+
+    return activate_classes_this_bait
+
+
+if __name__ == '__main__':
+    num_length, num_clean = 200, 100
+    u, u_new = test_large_add_small(num_length, num_clean, 1e6, is_double=True)
+    u_real = torch.cat([u[:num_clean] - torch.mean(u[:num_clean]), u[num_clean:] - torch.mean(u[num_clean:])])
+    print(u_real)
+    print(u_new)
+    print(torch.sqrt(torch.mean((u_new - u_real)**2)))
