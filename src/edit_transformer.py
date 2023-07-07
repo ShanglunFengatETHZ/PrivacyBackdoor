@@ -6,7 +6,7 @@ from random import choice
 import math
 from data import get_subdataset, load_dataset, get_dataloader
 import copy
-
+import random
 # at first backdoor:64 * 1, images: 16 * 16 = 64 * 4 gray scaling
 
 
@@ -19,7 +19,15 @@ def channel_extraction(type='gray'):
         color_weight = torch.tensor([0.0, 0.0, 1.0]).reshape(1, 3, 1, 1)
     elif type == 'blue':
         color_weight = torch.tensor([0.0, 0.0, 1.0]).reshape(1, 3, 1, 1)
+    else:
+        color_weight = torch.tensor([0.333, 0.333, 0.333]).reshape(1, 3, 1, 1)
     return color_weight
+
+
+def grayscale_images(images):
+    assert images.dim() == 4 and images.shape[1] == 3
+    color_weight = torch.tensor([0.30, 0.59, 0.11]).reshape(1, 3, 1, 1)
+    return torch.sum(images * color_weight, dim=1)
 
 
 def initial_conv_weight_generator(extracted_pixels, mode='gray', scaling=1.0, noise=None):
@@ -90,6 +98,128 @@ def bait_weight_generator(num_bkd, extracted_pixels, dl_train, dl_bait, bait_sub
     return torch.stack(bait_weights), torch.stack(bait_bias), bait_connect
 
 
+def training_sample_processing(dl_train, image_process_func=None, noise=None, noise_scaling=0.0, extracted_pixels=None):
+    tr_imgs, tr_labels = dl2tensor(dl_train)
+
+    if image_process_func is not None:
+        tr_imgs_processed = image_process_func(tr_imgs)
+    else:
+        tr_imgs_processed = tr_imgs
+
+    if extracted_pixels is not None:
+        if tr_imgs_processed.dim() == 3:
+            tr_imgs_cut = tr_imgs_processed[:, extracted_pixels]
+        else:
+            tr_imgs_cut = tr_imgs_processed[:, :, extracted_pixels].reshape(len(tr_imgs_processed), -1)
+    else:
+        tr_imgs_cut = tr_imgs_processed.reshape(len(tr_imgs_processed), -1)
+
+    if noise is None:
+        tr_imgs_noise = tr_imgs_cut + noise_scaling * torch.randn(tr_imgs_cut.shape[1])
+    else:
+        tr_imgs_noise = tr_imgs_cut + noise
+    return tr_imgs_noise, tr_labels
+
+
+def intelligent_gaussian_weight_generator(num_active_bkd, tr_imgs_noise, tr_labels, num_trial=None, bait_scaling=1.0, centralize_inputs=True,
+                                          topk=10, classes_less_than=None, gap_larger_than=0.01, activate_more_than=0, threshold_larger_than=10.0,
+                                          no_double_act_samples=True):
+    # is conv should out be implemented side this function
+    classes = set(tr_labels.tolist())
+
+    if classes_less_than is None:
+        classes_less_than = len(classes)
+
+    if centralize_inputs:
+        tr_imgs_input = tr_imgs_noise - tr_imgs_noise.mean(dim=1, keepdim=True)
+    else:
+        tr_imgs_input = tr_imgs_noise
+
+    num_fts = tr_imgs_input.shape[1]
+    baits = torch.randn(num_trial, num_fts)
+
+    bait_input = bait_scaling * baits / baits.norm(dim=1, keepdim=True)
+    similarities = bait_input @ tr_imgs_input.t()
+
+    lst_threshold, lst_activate_samples, lst_thres_between = [], [], []
+    for j in range(num_trial):
+        similarity_this_bait = similarities[j]
+        values, indices = similarity_this_bait.topk(topk)
+        upper_values = values[0:(len(values)-1)]
+        lower_values = values[1:len(values)]
+        gap = upper_values - lower_values
+        mean_neighbor = (upper_values + lower_values) / 2
+        idx = gap.argmax()
+        threshold_this_bait = mean_neighbor[idx]
+
+        lst_threshold.append(threshold_this_bait)
+        lst_activate_samples.append(indices[values > threshold_this_bait])
+        lst_thres_between.append((gap[idx], idx, idx + 1))
+
+    idx_bkd_candidate = []  # gap is large enough, possible true label less than all possible, how many fish is kept
+    for j in range(num_trial):
+        if len(set(tr_labels[lst_activate_samples[j]].tolist())) < classes_less_than:
+            gap, higher_idx, lower_idx = lst_thres_between[j]
+            if gap >= gap_larger_than:
+                if lower_idx >= activate_more_than:
+                    if lst_threshold[j] >= threshold_larger_than:
+                        idx_bkd_candidate.append(j)
+
+    idx_bkd_candidate_second = []
+    valid_activate_sample = set([])
+    valid_activate_sample_replicate = []
+    for idx in idx_bkd_candidate:
+        idx_activate_samples = set(lst_activate_samples[idx].tolist())
+        if idx_activate_samples.isdisjoint(valid_activate_sample):
+            valid_activate_sample.update(idx_activate_samples)
+            valid_activate_sample_replicate.extend(idx_activate_samples)
+            idx_bkd_candidate_second.append(idx)
+    print(f'replication : {len(valid_activate_sample_replicate) - len(valid_activate_sample)}')
+
+    if no_double_act_samples:  # outut distriguish between conv and linear normalization
+        idx_bkd_candidate = idx_bkd_candidate_second
+
+    assert len(idx_bkd_candidate) >= num_active_bkd, f'there is no enough candidate for baits, we have {len(idx_bkd_candidate)}, but we need {num_active_bkd}'
+    idx_activate_baits = torch.tensor(random.sample(idx_bkd_candidate, num_active_bkd))
+
+    print('gap,higher bound, lower bound')
+    for j in idx_activate_baits:
+        item = lst_thres_between[j]
+        print(f'{item[0].item()},{item[1].item()},{item[2].item()}')
+
+    bkd_activate = bait_input[idx_activate_baits]
+    threshold = torch.tensor(lst_threshold)[idx_activate_baits]
+    connect = []
+    for idx in idx_activate_baits:
+        class_activated = set(tr_labels[lst_activate_samples[idx]].tolist())
+        class_not_activated = classes - class_activated
+        connect.append(class_not_activated)
+
+    return bkd_activate, threshold, connect, valid_activate_sample
+
+
+def complete_bkd_weight_generator(num_bkd, bkd_activate, threshold, is_conv=False):
+    num_activate_bkd = len(bkd_activate)
+    if num_activate_bkd > num_bkd:
+        weight, bias = bkd_activate[:num_bkd], - 1.0 * threshold[:num_bkd]
+    elif num_activate_bkd < num_bkd:
+        if is_conv:
+            bias = torch.zeros(num_bkd)
+        else:
+            bias = torch.ones(num_bkd) * -1e-4
+
+        weight = torch.zeros(num_bkd, bkd_activate.shape[1])
+        weight[:num_activate_bkd] = bkd_activate
+        bias[:num_activate_bkd] = -1.0 * threshold
+    else:
+        weight, bias = bkd_activate, -1.0 * threshold
+
+    if is_conv:
+        weight = weight.reshape(num_bkd, 3, int(torch.sqrt(weight.shape[1]//3).item()), int(torch.sqrt(weight.shape[1]//3).item()))
+
+    return weight, bias
+
+
 def indices_period_generator(num_features=768, head=64, start=0, end=6):
     period = torch.div(num_features, head, rounding_mode='floor')
     indices = torch.arange(num_features)
@@ -134,7 +264,7 @@ class TransformerWrapper(nn.Module):
         self.backdoorblock, self.encoderblocks, self.synthesizeblocks = None, None, None
         self.indices_ft, self.indices_bkd, self.indices_img = None, None, None
         self.noise, self.conv_encoding_scaling, self.extracted_pixels, self.large_constant = None, None, None, None
-        self.qthres, self.bait_scaling, self.zeta, self.head_constant = None, None, None, None
+        self.bait_scaling, self.zeta, self.head_constant = None, None, None
 
     def divide_this_model(self, indices_ft, indices_bkd, indices_img):
         self.indices_ft = indices_ft
@@ -147,13 +277,12 @@ class TransformerWrapper(nn.Module):
         self.extracted_pixels = extracted_pixels
         self.large_constant = large_constant
 
-    def set_bkd(self, qthres, bait_scaling, zeta=100.0, head_constant=1.0):
-        self.qthres = qthres
+    def set_bkd(self, bait_scaling, zeta=100.0, head_constant=1.0):
         self.bait_scaling = bait_scaling
         self.zeta = zeta
         self.head_constant = head_constant
 
-    def initialize(self, dl_train, dl_bait, passing_mode='close_block',
+    def initialize(self, dl_train, passing_mode='close_block',
                    backdoorblock='encoder_layer_0', encoderblocks=None, synthesizeblocks='encoder_layer_11'):
 
         self.backdoorblock, self.encoderblocks, self.synthesizeblocks = backdoorblock, encoderblocks, synthesizeblocks
@@ -161,11 +290,23 @@ class TransformerWrapper(nn.Module):
         conv_weight_bias = initial_conv_weight_generator(extracted_pixels=self.extracted_pixels, mode='gray',
                                                          scaling=self.conv_encoding_scaling, noise=self.noise)
 
-        bait_weight, bait_bias, bait_connect = bait_weight_generator(len(self.indices_bkd), mode='sparse',
-                                                                     extracted_pixels=self.extracted_pixels, noise=self.noise, dl_train=dl_train, dl_bait=dl_bait,
-                                                                     bait_subset=0.5, qthres=self.qthres, bait_scaling=self.bait_scaling)
+        tr_imgs_noise, tr_labels = training_sample_processing(dl_train, extracted_pixels=self.extracted_pixels, image_process_func=grayscale_images, noise=self.noise)
+        tr_imgs_input = self.conv_encoding_scaling * tr_imgs_noise
+        bkd_activate, threshold, bait_connect, _ = intelligent_gaussian_weight_generator(num_active_bkd=len(self.indices_bkd), tr_imgs_noise=tr_imgs_input, tr_labels=tr_labels,
+                                                                                         num_trial=2000, gap_larger_than=20.0, activate_more_than=2, bait_scaling=self.bait_scaling)
+        bait_weight, bait_bias = complete_bkd_weight_generator(num_bkd=len(self.indices_bkd), bkd_activate=bkd_activate, threshold=threshold, is_conv=False)
+
+        if self.is_double:
+            bait_weight = bait_weight.double()
+            bait_bias = bait_bias.double()
+
+            conv_weight, conv_bias = conv_weight_bias
+            conv_weight, conv_bias = conv_weight.double(), conv_bias.double()
+
+            conv_weight_bias = (conv_weight, conv_bias)
 
         self.model.class_token.data[:] = 0.
+        self.model.class_token.data[:, :, self.indices_img] = self.large_constant
         edit_conv(self.model.conv_proj, indices_image_encoding=self.indices_img, params_image_channels=conv_weight_bias,
                   indices_zero=self.indices_bkd,
                   indices_dirty=self.indices_img, constant=self.large_constant)
@@ -174,7 +315,7 @@ class TransformerWrapper(nn.Module):
 
         edit_backdoor_block(getattr(layers, backdoorblock),
                             indices_ft=self.indices_ft, indices_bkd=self.indices_bkd, indices_image=self.indices_img,
-                            C=self.large_constant, weight_bait=bait_weight, bias_bait=bait_bias * self.conv_encoding_scaling, zeta=self.zeta)
+                            C=self.large_constant, weight_bait=bait_weight, bias_bait=bait_bias, zeta=self.zeta)
 
         if passing_mode == 'close_block':
             for eb in encoderblocks:
@@ -185,22 +326,26 @@ class TransformerWrapper(nn.Module):
                         C=self.large_constant)
 
         edit_lastlaynormalization(self.model.encoder.ln,
-                                  indices_ft=self.indices_ft, indices_bkd=self.indices_bkd, indices_img=self.indices_images,
-                                  C=large_constant)
+                                  indices_ft=self.indices_ft, indices_bkd=self.indices_bkd, indices_img=self.indices_img,
+                                  C=self.large_constant)
 
         edit_heads(self.model.heads,
-                   indices_bkd=self.indices_bkd, indices_images=self.indices_img,
-                   connect_set=bait_connect, constant=self.head_constant)
+                   indices_bkd=self.indices_bkd, connect_set=bait_connect, constant=self.head_constant)
 
         self.model0 = copy.deepcopy(self.model)
 
-    def reconstruct_images(self, h, w):
+    def reconstruct_images(self, h=None, w=None):
+        if h is None:
+            h = int(math.sqrt(len(self.indices_img)))
+        if w is None:
+            w = int(math.sqrt(len(self.indices_img)))
         assert h * w == len(self.indices_img), 'the width and height of an images is not correct'
-        bkd_weight_new = getattr(self.model.encoder.layers, self.backdoorblock).mlp[0].weight[self.indices_bkd]
-        bkd_weight_old = getattr(self.model0.encoder.layers, self.backdoorblock).mlp[0].weight[self.indices_bkd]
 
-        bkd_bias_new = getattr(self.model.encoder.layers, self.backdoorblock).mlp[0].bias[self.indices_bkd]
-        bkd_bias_old = getattr(self.model0.encoder.layers, self.backdoorblock).mlp[0].bias[self.indices_bkd]
+        bkd_weight_new = getattr(self.model.encoder.layers, self.backdoorblock).mlp[0].weight[self.indices_bkd].detach()
+        bkd_weight_old = getattr(self.model0.encoder.layers, self.backdoorblock).mlp[0].weight[self.indices_bkd].detach()
+
+        bkd_bias_new = getattr(self.model.encoder.layers, self.backdoorblock).mlp[0].bias[self.indices_bkd].detach()
+        bkd_bias_old = getattr(self.model0.encoder.layers, self.backdoorblock).mlp[0].bias[self.indices_bkd].detach()
 
         delta_weight = bkd_weight_new - bkd_weight_old
         delta_bias = bkd_bias_new - bkd_bias_old
@@ -208,15 +353,33 @@ class TransformerWrapper(nn.Module):
         img_lst = []
 
         for j in range(len(self.indices_bkd)):
-            delta_wt = delta_weight[j]
+            delta_wt = delta_weight[j, self.indices_img]
             delta_bs = delta_bias[j]
 
             if delta_bs.norm() < 1e-7:
                 img = torch.zeros(h, w)
             else:
                 img_dirty = delta_wt / delta_bs
-                img_clean = img_dirty /self.conv_encoding_scaling - self.epsilon
+                img_clean = img_dirty /self.conv_encoding_scaling - self.noise
                 img = img_clean.reshape(h, w)
+            img_lst.append(img)
+
+        return img_lst
+
+    def show_weight_images(self, h=None, w=None):
+        assert h * w == len(self.indices_img), 'the width and height of an images is not correct'
+        if h is None:
+            h = int(math.sqrt(len(self.indices_img)))
+        if w is None:
+            w = int(math.sqrt(len(self.indices_img)))
+
+        bkd_weight_old = getattr(self.model0.encoder.layers, self.backdoorblock).mlp[0].weight[self.indices_bkd]
+        img_lst = []
+
+        for j in range(len(self.indices_bkd)):
+            wt = bkd_weight_old[j]
+            img_clean = wt / self.bait_scaling - self.epsilon
+            img = img_clean.reshape(h, w)
             img_lst.append(img)
 
         return img_lst
@@ -245,6 +408,31 @@ class TransformerWrapper(nn.Module):
         delta_weight_bkd = weight_bkd_new - weight_bkd_old
         delta_bias_bkd = bias_bkd_new - bias_bkd_old
         return relative_delta_weight, relative_delta_bias
+
+    def show_weight_bias_change(self):
+        bkd_weight_new = getattr(self.model.encoder.layers, self.backdoorblock).mlp[0].weight[self.indices_bkd]
+        bkd_weight_old = getattr(self.model0.encoder.layers, self.backdoorblock).mlp[0].weight[self.indices_bkd]
+
+        bkd_bias_new = getattr(self.model.encoder.layers, self.backdoorblock).mlp[0].bias[self.indices_bkd]
+        bkd_bias_old = getattr(self.model0.encoder.layers, self.backdoorblock).mlp[0].bias[self.indices_bkd]
+
+        return torch.norm(bkd_weight_new - bkd_weight_old, dim=1), bkd_bias_new - bkd_bias_old
+
+    @property
+    def current_backdoor_module(self):
+        return getattr(self.model.encoder.layers, self.backdoorblock)
+
+    @property
+    def initial_backdoor_module(self):
+        return getattr(self.model0.encoder.layers, self.backdoorblock)
+
+    @property
+    def current_synthesize_module(self):
+        return getattr(self.model.encoder.layers, self.synthesizeblocks)
+
+    @property
+    def initial_synthesize_module(self):
+        return getattr(self.model0.encoder.layers, self.synthesizeblocks)
 
 
 def edit_conv(module, indices_image_encoding, params_image_channels, indices_zero, indices_dirty, constant=0.0):
@@ -358,15 +546,13 @@ def edit_lastlaynormalization(module, indices_ft, indices_bkd, indices_img, C):
     assign_ln(module, indices_img, weight=0.0, bias=0.0)
 
 
-def edit_heads(module, indices_bkd, indices_images, connect_set, constant=1.0):
+def edit_heads(module, indices_bkd, connect_set, constant=1.0):
     assert len(indices_bkd) == len(connect_set), 'number of backdoor should be the same as '
-    module.weight.data[:, indices_bkd] = 0.
+    module.weight.data[:, :] = 0.
     idx_output = torch.tensor([choice(list(cs)) for cs in connect_set])
     module.weight.data[idx_output, indices_bkd] = constant
-    module.bias.data[indices_bkd] = 0.
 
-    module.weight.data[:, indices_images] = 0.
-    module.bias.data[indices_images] = 0.
+    module.bias.data[:] = 0.
 
 
 if __name__ == '__main__':
@@ -374,9 +560,8 @@ if __name__ == '__main__':
 
     ds_path = '../../cifar10'
     tr_ds, bait_ds, _, _ = load_dataset(ds_path, 'cifar10', is_normalize=True)
-    tr_ds, _ = get_subdataset(tr_ds, p=0.2)
-    bait_ds, _ = get_subdataset(bait_ds, p=0.2)
-    tr_dl, dl_bait = get_dataloader(tr_ds, batch_size=64, num_workers=1, ds1=bait_ds)
+    tr_ds, _ = get_subdataset(tr_ds, p=1.0)
+    tr_dl= get_dataloader(tr_ds, batch_size=64, num_workers=1)
 
     hw_cut = 16
     noise_scaling = 3.0
@@ -388,11 +573,18 @@ if __name__ == '__main__':
     noise = noise_scaling * torch.randn(hw_cut * hw_cut)
 
     native_image = torch.rand(32, 32)
-    native_image[5:(5+hw_cut), 5:(5+hw_cut)] = 2.0
+    native_image[0:(0+hw_cut), 0:(0+hw_cut)] = 2.0
     extracted_pixels = (native_image > 1.5)
+
     conv_weight_bias = initial_conv_weight_generator(extracted_pixels, mode='gray', scaling=encoding_scaling, noise=noise)
-    bait_weight, bait_bias, bait_connect = bait_weight_generator(64, extracted_pixels=extracted_pixels, dl_train=tr_dl, dl_bait=dl_bait,
-                                       bait_subset=0.2, noise=noise, mode='sparse', qthres=qthres, bait_scaling=bait_scaling)
+    # bait_weight, bait_bias, bait_connect = bait_weight_generator(64, extracted_pixels=extracted_pixels, dl_train=tr_dl, dl_bait=dl_bait,
+                                      # bait_subset=0.2, noise=noise, mode='sparse', qthres=qthres, bait_scaling=bait_scaling)
+    tr_imgs_noise, tr_labels = training_sample_processing(tr_dl, extracted_pixels=extracted_pixels, image_process_func=grayscale_images, noise_scaling=3.0)
+    tr_imgs_input = 200 * tr_imgs_noise
+    bkd_activate, threshold, bait_connect, valid_activate_sample = intelligent_gaussian_weight_generator(num_active_bkd=64, tr_imgs_noise=tr_imgs_input, tr_labels=tr_labels, num_trial=2000,
+                                                                             gap_larger_than=20.0, activate_more_than=2, bait_scaling=0.2)
+    weight, bias = complete_bkd_weight_generator(num_bkd=64, bkd_activate=bkd_activate, threshold=threshold, is_conv=False)
+
 
     # print(torch.min(bait_weight @ bait_weight.t()))
     # print(f'{torch.max(bait_weight)} {torch.norm(bait_weight)}')
@@ -411,8 +603,8 @@ if __name__ == '__main__':
 
     features = torch.randn(64, 50, 768)
     features[:, :, indices_images] += large_constant
-    edit_backdoor_block(model.encoder.layers.encoder_layer_0, indices_ft=indices_ft, indices_bkd=indices_bkd,
-                       indices_image=indices_images, zeta=100.0, weight_bait=bait_weight, bias_bait=bait_bias * encoding_scaling, C=large_constant)
+    # edit_backdoor_block(model.encoder.layers.encoder_layer_0, indices_ft=indices_ft, indices_bkd=indices_bkd,
+                       # indices_image=indices_images, zeta=100.0, weight_bait=bait_weight, bias_bait=bait_bias * encoding_scaling, C=large_constant)
     # y = model.encoder.layers.encoder_layer_0(features)
     # print(f'features gap {torch.norm(y[:,:,indices_ft] - features[:,:,indices_ft])}')
     # print(f'norm features{torch.norm(features[:,:,indices_ft])}')
@@ -448,23 +640,6 @@ if __name__ == '__main__':
     print(f'images gap {torch.norm(y[:,:,indices_images] - (features[:,:,indices_images]))}')
     print(f'norm images {torch.norm(features[:,:,indices_images])}')
 
-    edit_heads(model.heads.head, indices_bkd=indices_bkd, indices_images=indices_images , connect_set=bait_connect,constant=1.0)
+    edit_heads(model.heads.head, indices_bkd=indices_bkd, connect_set=bait_connect, constant=1.0)
     # print(model)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 

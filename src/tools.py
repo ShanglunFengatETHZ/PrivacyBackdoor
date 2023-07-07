@@ -177,8 +177,8 @@ def plot_recovery(images, bias=(0.0, 0.0, 0.0), scaling=(1.0, 1.0, 1.0), hw=None
         bias = torch.tensor(bias).reshape(3, 1, 1)
         scaling = torch.tensor(scaling).reshape(3, 1, 1)
     else:
-        bias = float(bias)
-        scaling = float(scaling)
+        bias = float(bias[0])
+        scaling = float(scaling[0])
 
     for j in range(h * w):
         iw, ih = j // h, j % h
@@ -335,6 +335,7 @@ def find_different_classes(similarity, tr_labels, q=0.0, is_sort=False, is_print
     similarity_quantile = torch.quantile(similarity, q=q, dim=-1, keepdim=False)
 
     possible_lst = []
+    counter = torch.zeros(similarity.shape[1])
     for idx_bait in range(len(similarity)):
         similarity_this_bait = similarity[idx_bait]
         is_activate = (similarity_this_bait > similarity_quantile[idx_bait])
