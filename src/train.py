@@ -65,8 +65,9 @@ def train_model(model, dataloaders, optimizer, num_epochs, device, verbose=False
                 print(f'conv delta weight:{r_delta_wt_conv}')
                 print(f'conv delta bias:{r_delta_bs_conv}')
                 wt_change, bs_change = model.show_weight_bias_change()
+                print(f'bkd max logits:{outputs.max()}')
                 print(f'bkd delta weight:{wt_change}')
-                print(f'bkd delta bias:{1000.0 * bs_change}')
+                print(f'bkd delta bias:{1000*bs_change}')
 
                 # statistics
                 running_loss += loss.item() * inputs.size(0)
@@ -77,6 +78,8 @@ def train_model(model, dataloaders, optimizer, num_epochs, device, verbose=False
             # debug
             epoch_loss = running_loss / len(dataloaders[phase].dataset)
             epoch_acc = float(running_corrects) / len(dataloaders[phase].dataset)
+            print(epoch_loss)
+            print(epoch_acc)
             if logger is not None:
                 logger.info('{} Loss: {:.4f} Acc: {:.4f}'.format(phase, epoch_loss, epoch_acc))
 

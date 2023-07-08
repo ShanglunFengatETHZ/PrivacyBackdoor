@@ -34,7 +34,6 @@ def calculate_practical_similarity(tr_imgs, bait_imgs, noise_scaling=3.0, is_cos
 def calculate_gaussian_similarity(tr_imgs, bait_imgs, noise_scaling, is_ortho=False):
     assert tr_imgs.shape[1:] == bait_imgs.shape[1:], f'training images:{tr_imgs.shape[1:].numel()}, testing images:{bait_imgs.shape[1:].numel()}'
 
-
     num_tr, num_bait = len(tr_imgs), len(bait_imgs)
     num_fts = tr_imgs.shape[1:].numel()
 
@@ -43,6 +42,8 @@ def calculate_gaussian_similarity(tr_imgs, bait_imgs, noise_scaling, is_ortho=Fa
 
     noise = noise_scaling * torch.randn(num_fts)
     tr_inputs = tr_imgs_flatten + noise
+    print(tr_inputs.norm(dim=1).max())
+    print(tr_inputs.norm(dim=1).min())
     bait_inputs = torch.randn_like(bait_imgs_flatten)
 
     tr_inputs = tr_inputs - tr_inputs.mean(dim=1, keepdim=True)
@@ -129,8 +130,8 @@ def main():
     tr_imgs, tr_labels = dl2tensor(tr_dl)
     bait_imgs, bait_labels = dl2tensor(bait_dl)
 
-    tr_imgs_cut = tr_imgs[:, :, 0:16, 0:16]
-    bait_imgs_cut = bait_imgs[:, :, 0:16, 0:16]
+    tr_imgs_cut = tr_imgs[:, :, 8:24, 8:24]
+    bait_imgs_cut = bait_imgs[:, :, 8:24, 8:24]
 
     gray_weight = torch.tensor([0.30, 0.59, 0.11]).reshape(1, 3, 1, 1)
 
@@ -141,17 +142,17 @@ def main():
     qthres = 0.999
 
     # similarity = calculate_practical_similarity(tr_imgs=tr_gray_imgs, bait_imgs=bait_gray_imgs)
-    similarity, bait_inputs_normalized = calculate_gaussian_similarity(tr_imgs=tr_imgs, bait_imgs=bait_imgs, noise_scaling=3.0)
+    similarity, bait_inputs_normalized = calculate_gaussian_similarity(tr_imgs=tr_gray_imgs, bait_imgs=bait_gray_imgs, noise_scaling=3.0)
     # show the inner product between training images for determining whether the result is safe
     # cos_similarity = calculate_practical_similarity(tr_imgs=tr_gray_imgs, bait_imgs=tr_gray_imgs, noise_scaling=noise_scaling, is_cos_similarity=True)
     # epsilon=3.0, min x^T x^\prime = 0.355
     # epsilon=2.0 min x^T x^\prime = -0.0215
     # print(torch.min(cos_similarity))
 
-    gap_classes_per_bait = find_different_classes(similarity, tr_labels=tr_labels, q=qthres, is_sort=False, is_print=True)
-    good_baits = [info_bait['idx_bait'] for info_bait in gap_classes_per_bait[:20]]
-    find_replicate_samples(similarity[torch.tensor(good_baits)], q_thres=0.9999)
-    print(1)
+    # gap_classes_per_bait = find_different_classes(similarity, tr_labels=tr_labels, q=qthres, is_sort=False, is_print=True)
+    # good_baits = [info_bait['idx_bait'] for info_bait in gap_classes_per_bait[:20]]
+    # find_replicate_samples(similarity[torch.tensor(good_baits)], q_thres=0.9999)
+    # print(1)
 
 
     # show how strong will the replicate effect be

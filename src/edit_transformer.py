@@ -206,7 +206,7 @@ def complete_bkd_weight_generator(num_bkd, bkd_activate, threshold, is_conv=Fals
         if is_conv:
             bias = torch.zeros(num_bkd)
         else:
-            bias = torch.ones(num_bkd) * -1e-4
+            bias = torch.ones(num_bkd) * -1e4
 
         weight = torch.zeros(num_bkd, bkd_activate.shape[1])
         weight[:num_activate_bkd] = bkd_activate
@@ -247,6 +247,7 @@ class TransformerRegistrar:
             self.possible_images.append(imgs_act[j])
             self.large_logits.append(logits[idx_imgs_act])
 
+# TODO: fts part initialize naturally.
 
 class TransformerWrapper(nn.Module):
     def __init__(self, model, is_double=False, classes=10, registrar=None):
@@ -265,6 +266,7 @@ class TransformerWrapper(nn.Module):
         self.indices_ft, self.indices_bkd, self.indices_img = None, None, None
         self.noise, self.conv_encoding_scaling, self.extracted_pixels, self.large_constant = None, None, None, None
         self.bait_scaling, self.zeta, self.head_constant = None, None, None
+        self.num_active_bkd, self.v_scaling = 0, 0
 
     def divide_this_model(self, indices_ft, indices_bkd, indices_img):
         self.indices_ft = indices_ft
@@ -282,19 +284,21 @@ class TransformerWrapper(nn.Module):
         self.zeta = zeta
         self.head_constant = head_constant
 
-    def initialize(self, dl_train, passing_mode='close_block',
+    def initialize(self, dl_train, passing_mode='close_block', num_active_bkd=32, v_scaling=5.0,
                    backdoorblock='encoder_layer_0', encoderblocks=None, synthesizeblocks='encoder_layer_11'):
 
         self.backdoorblock, self.encoderblocks, self.synthesizeblocks = backdoorblock, encoderblocks, synthesizeblocks
+        self.num_active_bkd, self.v_scaling = num_active_bkd, v_scaling
 
         conv_weight_bias = initial_conv_weight_generator(extracted_pixels=self.extracted_pixels, mode='gray',
                                                          scaling=self.conv_encoding_scaling, noise=self.noise)
 
         tr_imgs_noise, tr_labels = training_sample_processing(dl_train, extracted_pixels=self.extracted_pixels, image_process_func=grayscale_images, noise=self.noise)
         tr_imgs_input = self.conv_encoding_scaling * tr_imgs_noise
-        bkd_activate, threshold, bait_connect, _ = intelligent_gaussian_weight_generator(num_active_bkd=len(self.indices_bkd), tr_imgs_noise=tr_imgs_input, tr_labels=tr_labels,
-                                                                                         num_trial=2000, gap_larger_than=20.0, activate_more_than=2, bait_scaling=self.bait_scaling)
-        bait_weight, bait_bias = complete_bkd_weight_generator(num_bkd=len(self.indices_bkd), bkd_activate=bkd_activate, threshold=threshold, is_conv=False)
+        gap = 10.0
+        bkd_activate, threshold, bait_connect, _ = intelligent_gaussian_weight_generator(num_active_bkd=self.num_active_bkd, tr_imgs_noise=tr_imgs_input, tr_labels=tr_labels,
+                                                                                         num_trial=3000, gap_larger_than=gap, activate_more_than=0, bait_scaling=self.bait_scaling)
+        bait_weight, bait_bias = complete_bkd_weight_generator(num_bkd=len(self.indices_bkd), bkd_activate=bkd_activate, threshold=threshold + 0.2 * gap, is_conv=False)
 
         if self.is_double:
             bait_weight = bait_weight.double()
@@ -323,7 +327,7 @@ class TransformerWrapper(nn.Module):
 
         edit_last_block(getattr(layers, synthesizeblocks),
                         indices_ft=self.indices_ft, indices_bkd=self.indices_bkd, indices_img=self.indices_img,
-                        C=self.large_constant)
+                        C=self.large_constant, v_scaling=self.v_scaling)
 
         edit_lastlaynormalization(self.model.encoder.ln,
                                   indices_ft=self.indices_ft, indices_bkd=self.indices_bkd, indices_img=self.indices_img,
@@ -494,6 +498,35 @@ def close_first_part_this_module(module):
     module.self_attention.out_proj.weight.data[:] = 0.
     module.self_attention.out_proj.bias.data[:] = 0.
 
+# TODO: change the initial head weight for
+
+
+def edit_divide_layernormalization(module, indices_imitate, indices_zero, zero_order_mu, zero_order_sigma):
+    assert isinstance(module, nn.LayerNorm), 'The input module should be LayerNormalization'
+    weight0, bias0 = module.weight.detach().clone(), module.bias.detach().clone()
+
+    module.weight.data[indices_imitate] = weight0[indices_imitate] * zero_order_sigma
+    module.weight.data[indices_zero] = 0.
+
+    module.bias.data[indices_imitate] = weight0[indices_imitate] * zero_order_mu
+    module.bias.data[indices_zero] = 0.
+
+
+def edit_partition_attention(module, num_fts, indices_imitate, indices_zero):
+    assert isinstance(module, nn.MultiheadAttention), ' the input module should be MultiHeadAttention'
+    module.in_proj_weight.data[indices_zero, :] = 0.
+    module.in_proj_weight.data[:, indices_zero] = 0.
+    module.in_proj_weight.data[:, num_fts+indices_zero] = 0.
+    module.in_proj_weight.data[2*num_fts+indices_zero, :] = 0.
+
+    module.in_proj_bias.data[indices_zero] = 0.
+    module.in_proj_bias.data[num_fts + indices_zero] = 0.
+    module.in_proj_bias.data[2 * num_fts + indices_zero] = 0.
+
+    module.out_proj.weight.data[indices_zero, :] = 0.
+    module.out_proj.weight.data[:, indices_zero] = 0.
+    module.out_proj.bias.data[indices_zero] = 0.
+
 
 def close_second_part_this_module(module):
     module.ln_2.weight.data[:] = 0.
@@ -512,32 +545,33 @@ def edit_closed_module(module):
     close_second_part_this_module(module)
 
 
-def edit_ending_attention(module, indices_bkd, nchannels=50):
+def edit_ending_attention(module, indices_bkd, v_scaling=50.0):
     #  merge all channels for activation and other features should be zero
     _, num_fts = module.in_proj_weight.shape
     module.in_proj_weight.data[0: 2 * num_fts, :] = 0.
 
     mask = torch.zeros(num_fts, num_fts)
     mask[indices_bkd, indices_bkd] = 1.0
-    module.in_proj_weight.data[2 * num_fts: 3 * num_fts, :] = mask * nchannels
+    module.in_proj_weight.data[2 * num_fts: 3 * num_fts, :] = mask * v_scaling
     module.in_proj_bias.data[:] = 0.
 
     module.out_proj.weight.data[:] = mask
     module.out_proj.bias.data[:] = 0.
 
 
-def edit_last_block(module, indices_ft, indices_bkd, indices_img, C, nchannels=50):
+def edit_last_block(module, indices_ft, indices_bkd, indices_img, C, v_scaling=5.0):
     m = len(indices_ft) + len(indices_bkd) + len(indices_img)
     m_u = len(indices_ft) + len(indices_bkd)
     sigma, b_u, b_v = cal_stat_wrtC(m, m_u, C)
     assign_ln(module.ln_1, torch.arange(m), weight=0., bias=0.)
     assign_ln(module.ln_1, indices_bkd, weight=sigma, bias=b_u)
 
-    edit_ending_attention(module.self_attention, indices_bkd, nchannels=nchannels)
+    edit_ending_attention(module.self_attention, indices_bkd, v_scaling=v_scaling)
     close_second_part_this_module(module)
 
 
 def edit_lastlaynormalization(module, indices_ft, indices_bkd, indices_img, C):
+    # TODO: should we keep weight of original last LN, or should we just make it start from identity?
     m = len(indices_ft) + len(indices_bkd) + len(indices_img)
     m_u = len(indices_ft) + len(indices_bkd)
     sigma, b_u, b_v = cal_stat_wrtC(m, m_u, C)
@@ -546,11 +580,14 @@ def edit_lastlaynormalization(module, indices_ft, indices_bkd, indices_img, C):
     assign_ln(module, indices_img, weight=0.0, bias=0.0)
 
 
-def edit_heads(module, indices_bkd, connect_set, constant=1.0):
-    assert len(indices_bkd) == len(connect_set), 'number of backdoor should be the same as '
+def edit_heads(module, indices_bkd, connect_set, constant=1.0, indices_ft=None):
     module.weight.data[:, :] = 0.
+
+    if indices_ft is not None:
+        nn.init.xavier_normal_(module.weight[:, indices_ft])
+
     idx_output = torch.tensor([choice(list(cs)) for cs in connect_set])
-    module.weight.data[idx_output, indices_bkd] = constant
+    module.weight.data[idx_output, indices_bkd[:len(idx_output)]] = constant
 
     module.bias.data[:] = 0.
 
@@ -580,9 +617,9 @@ if __name__ == '__main__':
     # bait_weight, bait_bias, bait_connect = bait_weight_generator(64, extracted_pixels=extracted_pixels, dl_train=tr_dl, dl_bait=dl_bait,
                                       # bait_subset=0.2, noise=noise, mode='sparse', qthres=qthres, bait_scaling=bait_scaling)
     tr_imgs_noise, tr_labels = training_sample_processing(tr_dl, extracted_pixels=extracted_pixels, image_process_func=grayscale_images, noise_scaling=3.0)
-    tr_imgs_input = 200 * tr_imgs_noise
-    bkd_activate, threshold, bait_connect, valid_activate_sample = intelligent_gaussian_weight_generator(num_active_bkd=64, tr_imgs_noise=tr_imgs_input, tr_labels=tr_labels, num_trial=2000,
-                                                                             gap_larger_than=20.0, activate_more_than=2, bait_scaling=0.2)
+    tr_imgs_input = 20 * tr_imgs_noise
+    bkd_activate, threshold, bait_connect, valid_activate_sample = intelligent_gaussian_weight_generator(num_active_bkd=32, tr_imgs_noise=tr_imgs_input, tr_labels=tr_labels, num_trial=2000,
+                                                                             gap_larger_than=10.0, activate_more_than=0, bait_scaling=0.5)
     weight, bias = complete_bkd_weight_generator(num_bkd=64, bkd_activate=bkd_activate, threshold=threshold, is_conv=False)
 
 
