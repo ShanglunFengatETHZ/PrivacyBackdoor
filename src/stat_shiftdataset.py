@@ -17,8 +17,8 @@ def calculate_practical_similarity(tr_imgs, bait_imgs, noise_scaling=3.0, is_cos
     torch.manual_seed(rs)
     noise = noise_scaling * torch.randn(num_fts)
     tr_inputs = tr_imgs_flatten + noise
-    # bait_inputs = bait_imgs_flatten + noise
-    bait_inputs = torch.randn_like(bait_imgs_flatten)
+    bait_inputs = bait_imgs_flatten + noise
+    # bait_inputs = torch.randn_like(bait_imgs_flatten)
 
     if is_centralize:
         bait_inputs = bait_inputs - bait_inputs.mean(dim=1, keepdim=True)
@@ -130,21 +130,22 @@ def main():
     tr_imgs, tr_labels = dl2tensor(tr_dl)
     bait_imgs, bait_labels = dl2tensor(bait_dl)
 
-    tr_imgs_cut = tr_imgs[:, :, 8:24, 8:24]
-    bait_imgs_cut = bait_imgs[:, :, 8:24, 8:24]
+    tr_imgs_cut = tr_imgs[:, :, 8:16, 8:24]
+    bait_imgs_cut = bait_imgs[:, :, 8:24, 8:16]
 
     gray_weight = torch.tensor([0.30, 0.59, 0.11]).reshape(1, 3, 1, 1)
 
     tr_gray_imgs = torch.sum(gray_weight * tr_imgs_cut, dim=1)
     bait_gray_imgs = torch.sum(gray_weight * bait_imgs_cut, dim=1)
 
-    # noise_scaling = 3.0
+    noise_scaling = 3.0
     qthres = 0.999
 
     # similarity = calculate_practical_similarity(tr_imgs=tr_gray_imgs, bait_imgs=bait_gray_imgs)
-    similarity, bait_inputs_normalized = calculate_gaussian_similarity(tr_imgs=tr_gray_imgs, bait_imgs=bait_gray_imgs, noise_scaling=3.0)
+    # similarity, bait_inputs_normalized = calculate_gaussian_similarity(tr_imgs=tr_gray_imgs, bait_imgs=bait_gray_imgs, noise_scaling=3.0)
     # show the inner product between training images for determining whether the result is safe
-    # cos_similarity = calculate_practical_similarity(tr_imgs=tr_gray_imgs, bait_imgs=tr_gray_imgs, noise_scaling=noise_scaling, is_cos_similarity=True)
+    cos_similarity = calculate_practical_similarity(tr_imgs=tr_gray_imgs, bait_imgs=tr_gray_imgs, noise_scaling=noise_scaling, is_cos_similarity=True)
+    print(cos_similarity.min())
     # epsilon=3.0, min x^T x^\prime = 0.355
     # epsilon=2.0 min x^T x^\prime = -0.0215
     # print(torch.min(cos_similarity))
@@ -175,7 +176,6 @@ def main():
     # print(torch.sum(tr_gray_imgs.reshape(-1) < -2.3997) / len(tr_gray_imgs.reshape(-1)))
     # plt.hist(tr_gray_imgs.reshape(-1))
     # plt.show()
-
 
     #tr_imgs_flat = tr_imgs.reshape(len(tr_imgs), -1)
     #tr_imgs_prime = tr_imgs.reshape(len(tr_imgs), -1)

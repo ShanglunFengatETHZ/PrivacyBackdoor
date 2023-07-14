@@ -4,9 +4,16 @@ from torch.optim import SGD
 import copy
 
 
-def get_optimizer(model, lr=0.1):
-    params = model.parameters()
-    return SGD(params=params, lr=lr)
+def get_optimizer(model, lr=0.1, heads_factor=None, linear_probe=False):
+    if heads_factor is None:
+        params = model.parameters()
+        return SGD(params=params, lr=lr)
+    else:
+        params_encoder = [param for name, param in model.named_parameters() if name not in ['heads.weight', 'heads.bias']]
+        params_fc = model.heads.parameters()
+        if linear_probe:
+            return SGD([{'params':params_fc, 'lr': lr * heads_factor}])
+        return SGD([{'params': params_encoder, 'lr': lr}, {'params':params_fc, 'lr': lr * heads_factor}])
 
 
 def train_model(model, dataloaders, optimizer, num_epochs, device, verbose=False,
@@ -62,12 +69,11 @@ def train_model(model, dataloaders, optimizer, num_epochs, device, verbose=False
                             model.backdoor.store_hooked_fish(inputs)
 
                 r_delta_wt_conv, r_delta_bs_conv = model.show_perturbation()
-                print(f'conv delta weight:{r_delta_wt_conv}')
-                print(f'conv delta bias:{r_delta_bs_conv}')
+                print(f'conv delta weight:{r_delta_wt_conv}, conv delta bias:{r_delta_bs_conv}')
                 wt_change, bs_change = model.show_weight_bias_change()
                 print(f'bkd max logits:{outputs.max()}')
-                print(f'bkd delta weight:{wt_change}')
-                print(f'bkd delta bias:{1000*bs_change}')
+                #print(f'bkd delta weight:{wt_change}')
+                #print(f'bkd delta bias:{1000*bs_change}')
 
                 # statistics
                 running_loss += loss.item() * inputs.size(0)

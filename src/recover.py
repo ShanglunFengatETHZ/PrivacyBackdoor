@@ -36,15 +36,15 @@ def extract_information(model_path, bias=(0.0, 0.0, 0.0), scaling=(1.0, 1.0, 1.0
         assert False, 'please input the correct plot mode'
 
 
-def extract_transformer_information(model_path, bias=(0.0,0.0,0.0), scaling=(1.0,1.0,1.0), hw=None, inches=None, plot_mode='recovery', save_path=None, cut=16):
-    model = torch.load(model_path)
+def extract_transformer_information(model_path, bias=(0.0, 0.0, 0.0), scaling=(1.0, 1.0, 1.0), hw=None, inches=None, plot_mode='recovery', save_path=None, cut=16):
+    model = torch.load(model_path, map_location=torch.device('cpu'))
     model.eval()
 
     if plot_mode == 'weights':
         images = model.show_weight_images()
         plot_recovery(images, bias=bias, scaling=scaling, hw=hw, inches=inches, save_path=save_path, plot_gray=True)
     elif plot_mode == 'recovery':
-        images = model.reconstruct_images()
+        images = model.reconstruct_images(h=8, w=16, is_double=True)
         plot_recovery(images, bias=bias, scaling=scaling, hw=hw, inches=inches, save_path=save_path, plot_gray=True)
     elif plot_mode == 'raw':
         images = model.registrar.possible_images

@@ -356,6 +356,23 @@ def find_different_classes(similarity, tr_labels, q=0.0, is_sort=False, is_print
     return activate_classes_this_bait
 
 
+def cal_stat_wrtC(m, m_u, C):
+    # b_u is mean value
+    m_v = m - m_u
+    sigma = math.sqrt(m_u * m_v / m ** 2) * C
+    b_u = m_v / m * C
+    b_v = -1.0 * m_u / m * C
+    return sigma, b_u, b_v
+
+
+def indices_period_generator(num_features=768, head=64, start=0, end=6):
+    period = torch.div(num_features, head, rounding_mode='floor')
+    indices = torch.arange(num_features)
+    remainder = indices % period
+    is_satisfy = torch.logical_and(remainder >= start, remainder < end)
+    return indices[is_satisfy]
+
+
 if __name__ == '__main__':
     num_length, num_clean = 200, 100
     u, u_new = test_large_add_small(num_length, num_clean, 1e6, is_double=True)
