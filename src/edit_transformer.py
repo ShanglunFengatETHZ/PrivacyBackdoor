@@ -88,6 +88,8 @@ def bait_weight_generator(num_bkd, extracted_pixels, dl_train, dl_bait, bait_sub
         available_baits_indices = torch.multinomial(torch.ones(len(info_baits)), num_bkd, replacement=False)
     elif mode == 'sparse':
         available_baits_indices = torch.arange(num_bkd)
+    else:
+        available_baits_indices = []
 
     bait_weights, bait_bias, bait_connect = [], [], []
     for j in available_baits_indices.tolist():
@@ -237,18 +239,23 @@ class TransformerRegistrar:
         self.large_logits = []
         self.outlier_threshold = outlier_threshold
         self.logit_history = []
+        self.state_process = 0
+
+    def update(self):
+        self.state_process += 1
 
     def register(self, images, logits):
-        images = images.detach().clone()
-        logits = logits.detach().clone()
+        if self.state_process == 0:
+            images = images.detach().clone()
+            logits = logits.detach().clone()
 
-        self.logit_history.append(logits)
-        idx_imgs_act = (logits.max(dim=1).values > self.outlier_threshold)
-        imgs_act = images[idx_imgs_act]
+            self.logit_history.append(logits)
+            idx_imgs_act = (logits.max(dim=1).values > self.outlier_threshold)
+            imgs_act = images[idx_imgs_act]
 
-        for j in range(len(imgs_act)):
-            self.possible_images.append(imgs_act[j])
-            self.large_logits.append(logits[idx_imgs_act])
+            for j in range(len(imgs_act)):
+                self.possible_images.append(imgs_act[j])
+                self.large_logits.append(logits[idx_imgs_act])
 
 
 class TransformerWrapper(nn.Module):
@@ -264,7 +271,7 @@ class TransformerWrapper(nn.Module):
         self.model0 = None
         self.registrar = registrar
 
-        self.backdoorblock, self.encoderblocks, self.filterblock, self.synthesizeblocks, self.zeroout = None, None, None, None, None
+        self.backdoorblock, self.encoderblocks, self.filterblock, self.synthesizeblocks, self.zerooutblock = None, None, None, None, None
         self.indices_ft, self.indices_bkd, self.indices_img = None, None, None
         self.noise, self.conv_encoding_scaling, self.extracted_pixels, self.large_constant = None, None, None, None
         self.bait_scaling, self.zeta, self.head_constant, self.zoom, self.shift_constant = None, None, None, None, None
@@ -275,9 +282,9 @@ class TransformerWrapper(nn.Module):
         self.indices_bkd = indices_bkd
         self.indices_img = indices_img
 
-    def divide_this_model_vertical(self, backdoorblock='encoder_layer_0', encoderblocks=None, synthesizeblocks='encoder_layer_11', filterblock=None, zeroout=None):
+    def divide_this_model_vertical(self, backdoorblock='encoder_layer_0', encoderblocks=None, synthesizeblocks='encoder_layer_11', filterblock=None, zerooutblock=None):
         self.backdoorblock = backdoorblock
-        self.zeroout = zeroout
+        self.zerooutblock = zerooutblock
         self.filterblock = filterblock
         self.encoderblocks = encoderblocks
         self.synthesizeblocks = synthesizeblocks
@@ -397,7 +404,7 @@ class TransformerWrapper(nn.Module):
                             indices_image=self.indices_img, C=self.large_constant, zeta=self.zeta, weight_bait=bait_weight,
                             bias_bait=bait_bias, inner_large_constant=True, epsilon=epsilon * self.conv_encoding_scaling)
 
-        edit_zero_img_block(getattr(layers, self.zeroout), indices_unrelated=torch.cat([self.indices_ft, self.indices_bkd]),
+        edit_zero_img_block(getattr(layers, self.zerooutblock), indices_unrelated=torch.cat([self.indices_ft, self.indices_bkd]),
                             indices_2zero=self.indices_img, C=self.large_constant, zoom=self.zoom, shift_constant=self.shift_constant,
                             inner_large_constant=True)
 
@@ -443,7 +450,7 @@ class TransformerWrapper(nn.Module):
                 delta_wt = delta_weight[j, self.indices_img]
             delta_bs = delta_bias[j]
 
-            if delta_bs.norm() < 1e-7:
+            if delta_bs.norm() < 1e-10:
                 img = torch.zeros(h, w)
             else:
                 img_dirty = delta_wt / delta_bs
@@ -483,17 +490,12 @@ class TransformerWrapper(nn.Module):
         weight_img_new, weight_img_old = self.model.conv_proj.weight[self.indices_img], self.model0.conv_proj.weight[self.indices_img]
         bias_img_new, bias_img_old = self.model.conv_proj.bias[self.indices_img], self.model0.conv_proj.bias[self.indices_img]
 
-        weight_bkd_new, weight_bkd_old = self.model.conv_proj.weight[self.indices_bkd], self.model0.conv_proj.weight[self.indices_bkd]
-        bias_bkd_new, bias_bkd_old = self.model.conv_proj.bias[self.indices_bkd], self.model0.conv_proj.bias[self.indices_bkd]
-
         delta_weight_img = weight_img_new - weight_img_old
         delta_bias_img = bias_img_new - bias_img_old
 
         relative_delta_weight = torch.norm(delta_weight_img) / torch.norm(weight_img_old)
         relative_delta_bias = torch.norm(delta_bias_img) / torch.norm(bias_img_old)
 
-        delta_weight_bkd = weight_bkd_new - weight_bkd_old
-        delta_bias_bkd = bias_bkd_new - bias_bkd_old
         return relative_delta_weight, relative_delta_bias
 
     def show_weight_bias_change(self):
@@ -503,7 +505,9 @@ class TransformerWrapper(nn.Module):
         bkd_bias_new = getattr(self.model.encoder.layers, self.backdoorblock).mlp[0].bias[self.indices_bkd]
         bkd_bias_old = getattr(self.model0.encoder.layers, self.backdoorblock).mlp[0].bias[self.indices_bkd]
 
-        return torch.norm(bkd_weight_new - bkd_weight_old, dim=1), bkd_bias_new - bkd_bias_old
+        delta_wt, delta_bs = torch.norm(bkd_weight_new - bkd_weight_old, dim=1), bkd_bias_new - bkd_bias_old
+
+        return delta_wt[:self.num_active_bkd].tolist(), delta_bs[:self.num_active_bkd].tolist()
 
     @property
     def current_backdoor_module(self):

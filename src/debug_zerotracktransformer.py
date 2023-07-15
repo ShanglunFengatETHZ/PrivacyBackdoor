@@ -6,20 +6,8 @@ from train import train_model, get_optimizer
 from test_half_transformer import half_activate_transformer
 
 
-if __name__ == '__main__':
-    ds_path = '../../cifar10'
-    tr_ds, test_ds, resolution, classes = load_dataset(ds_path, 'cifar10', is_normalize=True)
-    tr_ds, _ = get_subdataset(tr_ds, p=0.5, random_seed=136)
-    bait_ds, _ = get_subdataset(test_ds, p=0.2, random_seed=136)
-    tr_dl, test_dl = get_dataloader(tr_ds, batch_size=64, num_workers=2, ds1=test_ds)
-
+def build_classifier(classes):
     model0 = vit_b_32(weights=ViT_B_32_Weights.DEFAULT)
-
-    indices_ft = indices_period_generator(num_features=768, head=64, start=0, end=7)
-    indices_bkd = indices_period_generator(num_features=768, head=64, start=7, end=8)
-    indices_images = indices_period_generator(num_features=768, head=64, start=8, end=12)
-
-    """
     registrar = TransformerRegistrar(30.0)
 
     classifier = TransformerWrapper(model0, is_double=True, classes=classes, registrar=registrar)
@@ -42,11 +30,23 @@ if __name__ == '__main__':
 
     classifier.zero_track_initialize(dl_train=tr_dl, passing_mode='zero_pass', v_scaling=1.0, zoom=0.001,
                                      shift_constant=20.0, is_zero_matmul=False)
+    return classifier
 
-    """
 
+if __name__ == '__main__':
+    ds_path = '../../cifar10'
+    tr_ds, test_ds, resolution, classes = load_dataset(ds_path, 'cifar10', is_normalize=True)
+    tr_ds, _ = get_subdataset(tr_ds, p=0.5, random_seed=136)
+    bait_ds, _ = get_subdataset(test_ds, p=0.2, random_seed=136)
+    tr_dl, test_dl = get_dataloader(tr_ds, batch_size=64, num_workers=2, ds1=test_ds)
 
-    vt32_hf = half_activate_transformer(start_idx=2)
+    indices_ft = indices_period_generator(num_features=768, head=64, start=0, end=7)
+    indices_bkd = indices_period_generator(num_features=768, head=64, start=7, end=8)
+    indices_images = indices_period_generator(num_features=768, head=64, start=8, end=12)
+
+    # build_classifier(classes)
+
+    vt32_hf = half_activate_transformer(start_idx=3)
     vt32_hf = vt32_hf.double()
     classifier = torch.load('./weights/transformer_test.pth', map_location='cpu')
 
