@@ -20,7 +20,7 @@ def train_transformer():
     indices_bkd = indices_period_generator(num_features=768, head=64, start=7, end=8)
     indices_images = indices_period_generator(num_features=768, head=64, start=8, end=12)
 
-    registrar = TransformerRegistrar(1000.0)
+    registrar = TransformerRegistrar(200.0)
     classifier = TransformerWrapper(model0, is_double=True, classes=classes, registrar=registrar)
     classifier.divide_this_model_horizon(indices_ft=indices_ft, indices_bkd=indices_bkd, indices_img=indices_images)
     classifier.divide_this_model_vertical(backdoorblock='encoder_layer_0', zerooutblock='encoder_layer_1',
@@ -34,16 +34,16 @@ def train_transformer():
     extracted_pixels = (simulate_images > 0.5)
 
     classifier.set_conv_encoding(noise=noise, conv_encoding_scaling=200.0, extracted_pixels=extracted_pixels, large_constant=1e9)
-    classifier.set_bkd(bait_scaling=0.05, zeta=64000.0, num_active_bkd=32, head_constant=1.0)
+    classifier.set_bkd(bait_scaling=0.05, zeta=6400.0, num_active_bkd=32, head_constant=1.0)  # 64000
     classifier.zero_track_initialize(dl_train=tr_dl, passing_mode='zero_pass', v_scaling=1.0, is_zero_matmul=False)
 
     dataloaders = {'train': tr_dl, 'val': test_dl}
-    learning_rate = 1e-8
-    optimizer = get_optimizer(classifier.model, learning_rate, heads_factor=5e5, only_linear_probe=False)
+    learning_rate = 1e-7 # 1e-8
+    optimizer = get_optimizer(classifier.model, learning_rate, heads_factor=3e5, only_linear_probe=False)  # 5e5
     num_epochs = 5
     device = 'cuda'
 
-    prefix = '20230715_transformer_backdoor'
+    prefix = '20230715_transformer_backdoor_v2'
     log_file = f'experiments/logs/{prefix}.log'
     logger = logging.getLogger(__name__)
     logging.basicConfig(
@@ -55,7 +55,7 @@ def train_transformer():
     )
 
     new_classifier = train_model(classifier, dataloaders=dataloaders, optimizer=optimizer, num_epochs=num_epochs, device=device, verbose=True, direct_resize=224, logger=logger)
-    save_path = './weights/transformer_backdoor.pth'
+    save_path = './weights/transformer_backdoor_v2.pth'
     torch.save(new_classifier, save_path)
 
 

@@ -57,7 +57,7 @@ def half_activate_transformer(start_idx=1):
 def train_half_transformer():
     # ds_path = '../../cifar10'
     ds_path = '/cluster/project/privsec/data'
-    tr_ds, test_ds, resolution, classes = load_dataset(ds_path, 'cifar10', is_normalize=True)
+    tr_ds, test_ds, resolution, classes = load_dataset(ds_path, 'cifar10', is_normalize=True, resize=224)
     tr_ds, _ = get_subdataset(tr_ds, p=0.5, random_seed=136)
     bait_ds, _ = get_subdataset(test_ds, p=0.2, random_seed=136)
     tr_dl, test_dl = get_dataloader(tr_ds, batch_size=64, num_workers=2, ds1=test_ds)
@@ -70,7 +70,7 @@ def train_half_transformer():
     num_epochs = 5
     device = 'cuda'
 
-    prefix = '20230715_transformer_baseline_v2'
+    prefix = '20230716_transformer_baseline_enlarge'
     log_file = f'experiments/logs/{prefix}.log'
     logger = logging.getLogger(__name__)
     logging.basicConfig(
@@ -81,9 +81,9 @@ def train_half_transformer():
         force=True
     )
 
-    model_trained = train_model(model_new, dataloaders=dataloaders, optimizer=optimizer, num_epochs=num_epochs, device=device, verbose=False, direct_resize=224, logger=logger)
-    save_path = './weights/transformer_baseline_v2.pth'
-    torch.save(model_trained.state_dict(), save_path)
+    model_trained = train_model(model_new, dataloaders=dataloaders, optimizer=optimizer, num_epochs=num_epochs, device=device, verbose=False, direct_resize=None, logger=logger)
+    # save_path = './weights/transformer_baseline_enlarge.pth'
+    # torch.save(model_trained.state_dict(), save_path)
 
 
 if __name__ == '__main__':

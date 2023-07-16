@@ -5,7 +5,7 @@ import torchvision.transforms as transforms
 from tools import setdiff1d
 
 
-def load_dataset(root, dataset, is_normalize=False):
+def load_dataset(root, dataset, is_normalize=False, resize=None):
     if dataset == 'cifar100':
         train_dataset = datasets.CIFAR100(root, train=True, transform=transforms.ToTensor(), download=False)
         test_dataset = datasets.CIFAR100(root, train=False, transform=transforms.ToTensor(), download=False)
@@ -17,10 +17,15 @@ def load_dataset(root, dataset, is_normalize=False):
         resolution = 224
         classes = 1000
     else:
-        transform_cifar10 = transforms.ToTensor() if is_normalize is False else transforms.Compose([transforms.ToTensor(),
-                                                                                                    transforms.Normalize(mean=(0.4914, 0.4822, 0.4465), std=(0.2023, 0.1994, 0.2010))])
-        train_dataset = datasets.CIFAR10(root, train=True, transform=transform_cifar10, download=False)
-        test_dataset = datasets.CIFAR10(root, train=False, transform=transform_cifar10, download=False)
+        transform_lst = []
+        if resize is not None:
+            transform_lst.append(transforms.Resize(resize))
+        transform_lst.append(transforms.ToTensor())
+        if is_normalize:
+            transform_lst.append(transforms.Normalize(mean=(0.4914, 0.4822, 0.4465), std=(0.2023, 0.1994, 0.2010)))
+
+        train_dataset = datasets.CIFAR10(root, train=True, transform=transforms.Compose(transform_lst), download=False)
+        test_dataset = datasets.CIFAR10(root, train=False, transform=transforms.Compose(transform_lst), download=False)
         resolution = 32
         classes = 10
 
