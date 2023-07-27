@@ -45,8 +45,10 @@ def output_intermediate(img, model, to=None):
     batch_class_token = model.class_token.expand(n, -1, -1)
     x = torch.cat([batch_class_token, x], dim=1)
     layers = model.encoder.layers
-    if to is not None:
+    if to is not None and to >= 1:
         z = layers[:to](x)
+    elif to is not None:
+        z = x
     else:
         z = layers(x)
     return z
@@ -164,7 +166,7 @@ if __name__ == '__main__':
     vt32_hf.heads = nn.Linear(768, 10)
     vt32_hf.load_state_dict(torch.load('./weights/transformer_baseline.pth', map_location='cpu'))
     vt32_hf = vt32_hf.double()
-    classifier = torch.load('./weights/transformer_backdoor_v2.pth', map_location='cpu')
+    classifier = torch.load('./weights/transformer_backdoor_v4.pth', map_location='cpu')
 
     img, _ = next(iter(tr_dl))
     img_big = torch.zeros(128, 3, 224, 224)
@@ -181,7 +183,7 @@ if __name__ == '__main__':
     plot_correlation(corr)
     """
 
-    """
+
     # plot z variance by sample
     z = output_intermediate(img_big, model=classifier.model, to=None)
     var_ft_lst, var_bkd_lst, var_img_lst = cal_layer_variance(z, channel=0, indices_ft=indices_ft, indices_bkd=indices_bkd,
@@ -192,9 +194,9 @@ if __name__ == '__main__':
     print(var_img_lst)
     plot_multi_hist(x=var_ft_lst, label_x='features', y=var_img_lst, label_y='pixels', z=var_bkd_lst, label_z='backdoors', narrow=['y'],
                    xaxis_label=r'$\sqrt{\mathbb{E}[Z^2]} & \mathrm{Std}(Z)$', save_to='experiments/results/20230715_transformer_vanilla/z_var_dist_v2.eps')
+
+
     """
-
-
     # plot z variance by feature
     z = output_intermediate(img_big, model=classifier.model, to=None)
     std_lst_ft = cal_sample_variance(z, channel=0, indices=indices_ft, is_moment=False)
@@ -205,7 +207,9 @@ if __name__ == '__main__':
     print(std_lst_bkd)
     print(std_lst_img)
     plot_multi_hist(x=std_lst_ft, label_x='features', y=std_lst_img, label_y='pixels', z=std_lst_bkd, label_z='backdoors',
-                    xaxis_label=r'$\mathrm{Std}(X)$', save_to='experiments/results/20230715_transformer_vanilla/x_var_dist_v2.eps', narrow='z')
+                    xaxis_label=r'$\mathrm{Std}(X)$', save_to=None)
+    """
+
 
 
 

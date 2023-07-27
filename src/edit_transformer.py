@@ -273,7 +273,7 @@ class TransformerWrapper(nn.Module):
 
         self.backdoorblock, self.encoderblocks, self.filterblock, self.synthesizeblocks, self.zerooutblock = None, None, None, None, None
         self.indices_ft, self.indices_bkd, self.indices_img = None, None, None
-        self.noise, self.conv_encoding_scaling, self.extracted_pixels, self.large_constant = None, None, None, None
+        self.noise, self.conv_encoding_scaling, self.extracted_pixels, self.default_large_constant = None, None, None, None
         self.bait_scaling, self.zeta, self.head_constant, self.zoom, self.shift_constant = None, None, None, None, None
         self.num_active_bkd, self.v_scaling, self.factors = 0, 0, None
 
@@ -290,11 +290,11 @@ class TransformerWrapper(nn.Module):
         self.synthesizeblocks = synthesizeblocks
 
 
-    def set_conv_encoding(self, noise, conv_encoding_scaling, extracted_pixels, large_constant):
+    def set_conv_encoding(self, noise, conv_encoding_scaling, extracted_pixels, default_large_constant=1e9):
         self.noise = noise
         self.conv_encoding_scaling = conv_encoding_scaling
         self.extracted_pixels = extracted_pixels
-        self.large_constant = large_constant
+        self.default_large_constant = default_large_constant
 
     def set_bkd(self, bait_scaling, num_active_bkd=32, zeta=100.0, head_constant=1.0):
         self.bait_scaling = bait_scaling
@@ -305,7 +305,8 @@ class TransformerWrapper(nn.Module):
     def set_factors(self, factors):
         self.factors = factors
 
-    def initialize(self, dl_train, passing_mode='close_block', v_scaling=5.0, is_zero_matmul=False):
+    """
+     def initialize(self, dl_train, passing_mode='close_block', v_scaling=5.0, is_zero_matmul=False, gap=10.0):
 
         self.v_scaling = v_scaling
 
@@ -315,7 +316,6 @@ class TransformerWrapper(nn.Module):
         tr_imgs_noise, tr_labels = training_sample_processing(dl_train, extracted_pixels=self.extracted_pixels,
                                                               image_process_func=grayscale_images, noise=self.noise)
         tr_imgs_input = self.conv_encoding_scaling * tr_imgs_noise
-        gap = 10.0
         bkd_activate, threshold, bait_connect, _ = intelligent_gaussian_weight_generator(num_active_bkd=self.num_active_bkd, tr_imgs_raw=tr_imgs_input, tr_labels=tr_labels,
                                                                                          num_trial=3000, gap_larger_than=gap, activate_more_than=0, bait_scaling=self.bait_scaling, neighbor_balance=(0.8, 0.2))
         bait_weight, bait_bias = complete_bkd_weight_generator(num_bkd=len(self.indices_bkd), bkd_activate=bkd_activate, threshold=threshold, is_conv=False)
@@ -354,12 +354,15 @@ class TransformerWrapper(nn.Module):
         edit_heads(self.model.heads, indices_bkd=self.indices_bkd, connect_set=bait_connect, constant=self.head_constant,
                    indices_ft=self.indices_ft)
 
-        self.model0 = copy.deepcopy(self.model)
+        self.model0 = copy.deepcopy(self.model)   
+    """
 
-    def zero_track_initialize(self, dl_train, passing_mode='zero_pass', v_scaling=1.0, zoom=0.01, shift_constant=12.0, is_zero_matmul=False):
+    def zero_track_initialize(self, dl_train, passing_mode='zero_pass', v_scaling=1.0, zoom=0.01, shift_constant=12.0, gap=10.0, is_zero_matmul=False, constants={}):
         self.v_scaling = v_scaling
         self.zoom = zoom
         self.shift_constant = shift_constant
+
+        get_constant = lambda module_name: constants.get('module_name', self.default_large_constant)
 
         indices_img_ps, indices_img_ng = self.indices_img[torch.arange(0, len(self.indices_img), 2)], self.indices_img[torch.arange(1, len(self.indices_img), 2)]
 
@@ -370,11 +373,10 @@ class TransformerWrapper(nn.Module):
         epsilon[torch.arange(0, len(epsilon), 2)] = self.noise
         epsilon[torch.arange(1, len(epsilon), 2)] = -1.0 * self.noise
 
-        gap = 10.0
         bkd_activate, threshold, bait_connect, _ = intelligent_gaussian_weight_generator(
             num_active_bkd=self.num_active_bkd, tr_imgs_raw=tr_imgs_raw * self.conv_encoding_scaling, tr_labels=tr_labels,
             num_trial=3000, gap_larger_than=gap, activate_more_than=0, bait_scaling=self.bait_scaling,
-            noise=self.noise * self.conv_encoding_scaling, neighbor_balance=(0.9, 0.1))
+            noise=self.noise * self.conv_encoding_scaling, neighbor_balance=(0.8, 0.2), centralize_inputs=False)
 
         bait_weight, bait_bias = complete_bkd_weight_generator(num_bkd=len(self.indices_bkd), bkd_activate=bkd_activate,
                                                                threshold=threshold, is_conv=False, is_double=True)
@@ -401,24 +403,24 @@ class TransformerWrapper(nn.Module):
                             indices_img=self.indices_img, start_idx=3)
 
         edit_backdoor_block(getattr(layers, self.backdoorblock), indices_ft=self.indices_ft, indices_bkd=self.indices_bkd,
-                            indices_image=self.indices_img, C=self.large_constant, zeta=self.zeta, weight_bait=bait_weight,
+                            indices_image=self.indices_img, C=get_constant('backdoor'), zeta=self.zeta, weight_bait=bait_weight,
                             bias_bait=bait_bias, inner_large_constant=True, epsilon=epsilon * self.conv_encoding_scaling)
 
         edit_zero_img_block(getattr(layers, self.zerooutblock), indices_unrelated=torch.cat([self.indices_ft, self.indices_bkd]),
-                            indices_2zero=self.indices_img, C=self.large_constant, zoom=self.zoom, shift_constant=self.shift_constant,
+                            indices_2zero=self.indices_img, C=get_constant('annihilation'), zoom=self.zoom, shift_constant=self.shift_constant,
                             inner_large_constant=True)
 
         edit_block_to_gradient_filter(getattr(layers, self.filterblock), indices_hinder=self.indices_img, indices_absorbing=self.indices_ft,
-                                      indices_passing=self.indices_bkd, C=self.large_constant, shift_constant=self.shift_constant)
+                                      indices_passing=self.indices_bkd, C=get_constant('shunt'), shift_constant=4.0)
 
-        layers[-2].mlp[3].bias.data[self.indices_img] = self.large_constant
+        layers[-2].mlp[3].bias.data[self.indices_img] = get_constant('synthesize')
         edit_last_block(getattr(layers, self.synthesizeblocks), indices_ft=self.indices_ft, indices_bkd=self.indices_bkd,
-                        indices_img=self.indices_img, C=self.large_constant, v_scaling=self.v_scaling)
+                        indices_img=self.indices_img, C=get_constant('synthesize'), v_scaling=self.v_scaling)
 
         edit_terminalLN_identity_zero(self.model.encoder.ln, indices_ft=self.indices_ft, indices_bkd=self.indices_bkd,
-                                      indices_img=self.indices_img, C=self.large_constant)
-        self.model.encoder.ln.weight.data[self.indices_ft] = 5.0 * self.model.encoder.ln.weight[self.indices_ft].detach().clone()
-        self.model.encoder.ln.bias.data[self.indices_ft] = 5.0 * self.model.encoder.ln.bias[self.indices_ft].detach().clone()
+                                      indices_img=self.indices_img, C=get_constant('finalLN'))
+        # self.model.encoder.ln.weight.data[self.indices_ft] = 5.0 * self.model.encoder.ln.weight[self.indices_ft].detach().clone()
+        # self.model.encoder.ln.bias.data[self.indices_ft] = 5.0 * self.model.encoder.ln.bias[self.indices_ft].detach().clone()
 
         edit_heads(self.model.heads, indices_bkd=self.indices_bkd, connect_set=bait_connect, constant=self.head_constant,
                    indices_ft=self.indices_ft)
@@ -613,7 +615,6 @@ def edit_zero_img_block(module, indices_unrelated, indices_2zero, C, zoom=0.01, 
 
     if inner_large_constant:
         module.mlp[3].bias.data[indices_2zero] -= C
-
 
 
 def close_first_part_this_module(module):

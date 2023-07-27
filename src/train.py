@@ -72,6 +72,12 @@ def train_model(model, dataloaders, optimizer, num_epochs, device='cpu', verbose
                     print(f'bkd delta weight:{wt_change}')
                     print(f'bkd delta bias:{bs_change}')
                 print(f'phase:{phase}, max logits:{outputs.max()}, min logits:{outputs.min()}, variance:{outputs.var(dim=0)}')
+                """
+                with torch.no_grad():
+                    if hasattr(model, 'model0'):
+                        outputs_old = model.model0(inputs.double())
+                        print(f'max old logits:{outputs_old.max()}, min old logits:{outputs_old.min()}, old variance:{outputs_old.var(dim=0)}')
+                """
 
                 # statistics
                 running_loss += loss.item() * inputs.size(0)
