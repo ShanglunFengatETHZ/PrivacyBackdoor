@@ -330,6 +330,14 @@ def reshape_weight_to_sub_image(weight, image_channel, image_height, image_width
     return images
 
 
+def cal_set_difference_seq(n, indices)
+    x = torch.zeros(n).tolist()
+    x[indices] = 1.0
+    is_complement = (x < 0.5)
+    all_indices = torch.arange(n)
+    return all_indices[is_complement]
+
+
 def find_different_classes(similarity, tr_labels, q=0.0, is_sort=False, is_print=True):
     all_classes = set([0, 1, 2, 3, 4, 5, 6, 7, 8, 9])
     similarity_quantile = torch.quantile(similarity, q=q, dim=-1, keepdim=False)
