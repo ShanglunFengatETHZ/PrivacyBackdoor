@@ -36,6 +36,7 @@ def train_model(model, dataloaders, optimizer, num_epochs, device='cpu', verbose
 
             # Iterate over data.
             for i, this_batch in enumerate(dataloader):
+                print(f'batch {i}')
                 inputs, labels = this_batch
                 if direct_resize is not None:
                     big_inputs = torch.zeros(inputs.shape[0], inputs.shape[1], direct_resize, direct_resize)
@@ -46,8 +47,6 @@ def train_model(model, dataloaders, optimizer, num_epochs, device='cpu', verbose
                 labels = labels.to(device)
 
                 optimizer.zero_grad()
-
-                print(f'batch {i}')
                 with torch.set_grad_enabled(phase == 'train'):
                     # forward propagation
                     outputs = model(inputs)

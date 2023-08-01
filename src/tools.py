@@ -210,13 +210,19 @@ def plot_recovery(images, bias=(0.0, 0.0, 0.0), scaling=(1.0, 1.0, 1.0), hw=None
     plt.show()
 
 
-def pass_forward(net, dataloader):
+def pass_forward(net, dataloader, return_label=False):
     fts = []
+    labels = []
     with torch.no_grad():
         for X, y in dataloader:
             ft = net(X)
             fts.append(ft)
-    return torch.cat(fts)
+            labels.append(y)
+
+    if return_label:
+        return torch.cat(fts), torch.cat(labels)
+    else:
+        return torch.cat(fts)
 
 
 def large_add_small(u, beta):

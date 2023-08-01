@@ -51,6 +51,12 @@ class EncoderMLP(nn.Module):
         for module in which_module:
             getattr(self, module).load_state_dict(weights)
 
+    def mlp_parameters(self):
+        encoder_module_names = []
+        for encoder_name, param in self.encoder.named_parameters():
+            encoder_module_names.append(encoder_name)
+        params_encoder = [param for name, param in self.named_parameters() if name not in encoder_module_names]
+
 
 class DiffPrvBackdoorRegistrar:
     def __init__(self, indices_bkd_u=-1, indices_bkd_v=-1, m_u=None, m_v=None, targets=None, labels=None):
@@ -137,8 +143,6 @@ class DiffPrvBackdoorRegistrar:
         inactivation_change = delta_bu_bkd[torch.logical_not(activation_table)]
         print(f'activation change mean value:{activation_change.mean()}, variance:{activation_change.var()}')
         print(f'activation change mean value:{inactivation_change.mean()}, variance:{inactivation_change.var()}')
-
-
 
 
 class DiffPrvBackdoorMLP(EncoderMLP):
