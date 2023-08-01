@@ -5,6 +5,7 @@ import random
 
 
 class EncoderMLP(nn.Module):
+    # TODO: present results
     def __init__(self, encoder=None, mlp_sizes=None, input_size=(3, 32, 32), num_classes=10, dropout=None):
         super().__init__()
         self.input_size = input_size
@@ -68,7 +69,6 @@ class DiffPrvBackdoorRegistrar:
         self.targets = targets
         self.labels = labels
 
-
     def update_output_log(self, u, v):
         # u_ft, v_ft = u[:, self.indices_others_u], v[:, self.indices_others_v]
         u_bkd, v_bkd = u[:, self.indices_bkd_u], v[:, self.indices_bkd_v]
@@ -85,6 +85,60 @@ class DiffPrvBackdoorRegistrar:
         bu = bu.detach().clone()
         self.epoch = epoch
         self.bu_bkd_log.append({'epoch': epoch, 'bu_bkd': bu[self.indices_bkd_u]})
+
+    def log_to_table(self, which_log):
+        if which_log == 'activation':
+            activation_log = getattr(self, which_log + '_log')
+            activation_table = torch.zeros(len(activation_log), self.num_bkd)
+            for j in range(len(activation_log)):
+                if len(self.bu_activation_log[j].keys()) > 0:
+                    activation_table[j, self.bu_activation_log[j]['u_bkd_idx']] = 1.0
+            activation_table = (activation_table > 0.5)
+            return activation_table
+        elif which_log == 'bu_bkd':
+            bu_bkd_log = getattr(self, which_log + '_log')
+            bu_bkd_table = torch.zeros(len(bu_bkd_log), self.num_bkd)
+            for j in range(bu_bkd_log):
+                bu_bkd_table[j] = bu_bkd_log[j]['bu_bkd']
+            return bu_bkd_table
+
+    def show_activation_information(self):
+        epoch = 0
+        lst_epochs = [[]]
+        for j in range(len(self.activation_log)):
+            activation_this_step = self.activation_log[j]
+            if len(activation_this_step.keys()) > 0:
+                if activation_this_step['epoch'] != epoch:
+                    epoch = activation_this_step['epoch']
+                    lst_epochs.append([])
+                lst_epochs[epoch].append(activation_this_step)
+        lst_u_byepoch = []
+        lst_v_byepoch = []
+        for info_epoch in lst_epochs:
+            activation_this_epoch_u = torch.zeros(len(info_epoch), self.num_bkd)
+            activation_this_epoch_v = torch.zeros(len(info_epoch), self.num_bkd)
+            for j in range(len(info_epoch)):
+                if len(info_epoch[j].keys()) > 0:
+                    activation_this_epoch_u[j, info_epoch[j]['u_bkd_idx']] = info_epoch[j]['u_bkd']
+                    activation_this_epoch_v[j, info_epoch[j]['v_bkd_idx']] = info_epoch[j]['v_bkd']
+            lst_u_byepoch.append(activation_this_epoch_u)
+            lst_v_byepoch.append(activation_this_epoch_v)
+
+        return lst_u_byepoch, lst_v_byepoch
+
+
+    def get_change_by_activation(self):
+        print(f'the length of activation log is {len(self.activation_log)}')
+        print(f'the length of bu bkd log is {len(self.bu_bkd_log)}')  # bu_log should be activation log + 1
+        activation_table = self.log_to_table('activation')
+        bu_bkd_table = self.log_to_table('bu_bkd')
+        delta_bu_bkd = bu_bkd_table[1:] - bu_bkd_table[:-1]
+        activation_change = delta_bu_bkd[activation_table]
+        inactivation_change = delta_bu_bkd[torch.logical_not(activation_table)]
+        print(f'activation change mean value:{activation_change.mean()}, variance:{activation_change.var()}')
+        print(f'activation change mean value:{inactivation_change.mean()}, variance:{inactivation_change.var()}')
+
+
 
 
 class DiffPrvBackdoorMLP(EncoderMLP):
@@ -106,9 +160,10 @@ class DiffPrvBackdoorMLP(EncoderMLP):
         self.backdoor_registrar.update_state(epoch, self.mlp_1stpart[0].bias)
 
     def vanilla_initialize(self, encoder_scaling_module_idx=-1, weights=None, thresholds=None, passing_threshold=None, factors=None):
+        # TODO: requires no gradient
         # requires no grad for encoder
         self.scale_encoder_output(idx_module=encoder_scaling_module_idx, scaling_factor=factors.get('encoder',1.0))
-        self.pass_feature_and_build_activation(self, self.mlp_1stpart[0], indices_bkd=self.backdoor_registrar.indices_bkd_u,
+        self.pass_feature_and_build_activation(self.mlp_1stpart[0], indices_bkd=self.backdoor_registrar.indices_bkd_u,
                                                weights=weights, thresholds=thresholds, passing_scaling_factor=factors.get('features_passing', 1.0),
                                                weight_factor=factors.get('bait', 1.0))
         self.lock_and_pass_activation(indices_bkd_input=self.backdoor_registrar.indices_bkd_u, indices_bkd_output=self.backdoor_registrar.indices_bkd_v,
@@ -123,6 +178,9 @@ class DiffPrvBackdoorMLP(EncoderMLP):
 
         self.edit_vanilla_probe(indices_bkd=self.backdoor_registrar.indices_bkd_v, classes=classes_connect,
                                 activation_class_factor=factors.get('connect', 1.0))
+
+        for param in self.encoder.parameters():
+            param.requires_grad = False
 
     def scale_encoder_output(self, idx_module=-1, scaling_factor=1.0):
         self.encoder[idx_module].weight.data = scaling_factor * self.encoder[idx_module].weight.detach().clone()

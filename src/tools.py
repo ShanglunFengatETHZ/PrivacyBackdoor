@@ -330,7 +330,7 @@ def reshape_weight_to_sub_image(weight, image_channel, image_height, image_width
     return images
 
 
-def cal_set_difference_seq(n, indices)
+def cal_set_difference_seq(n, indices):
     x = torch.zeros(n).tolist()
     x[indices] = 1.0
     is_complement = (x < 0.5)
@@ -379,6 +379,10 @@ def indices_period_generator(num_features=768, head=64, start=0, end=6):
     remainder = indices % period
     is_satisfy = torch.logical_and(remainder >= start, remainder < end)
     return indices[is_satisfy]
+
+
+
+
 
 
 if __name__ == '__main__':
