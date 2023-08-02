@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 from torch.optim import SGD
+from opacus.utils.batch_memory_manager import BatchMemoryManager
 
 
 def get_optimizer(model, lr=0.1, heads_factor=None, only_linear_probe=False):
@@ -98,3 +99,68 @@ def train_model(model, dataloaders, optimizer, num_epochs, device='cpu', verbose
                     logger.info('doors that been activated more than once at a time'+str(model.backdoor.registrar.is_mixture.tolist()))
 
     return model.to('cpu')
+
+
+def dp_train_by_epoch(model, train_loader, optimizer, privacy_engine, epoch, delta=1e-5, device='cpu', max_physical_batch_size=128,
+                      logger=None):
+    model.train()
+    criterion = nn.CrossEntropyLoss()
+
+    losses = []
+    is_correct_lst = []
+
+    with BatchMemoryManager(
+            data_loader=train_loader,
+            max_physical_batch_size=max_physical_batch_size,
+            optimizer=optimizer
+    ) as memory_safe_data_loader:
+
+        for i, (images, target) in enumerate(memory_safe_data_loader):
+            model.update_state(epoch)
+            optimizer.zero_grad()
+            images = images.to(device)
+            target = target.to(device)
+
+            # compute output
+            output = model(images)
+            loss = criterion(output, target)
+
+            _, preds = torch.max(output, 1)
+            # measure accuracy and record loss
+            is_correct = (preds == target)
+
+            losses.append(loss.item())
+            is_correct_lst.append(is_correct)
+
+            loss.backward()
+            optimizer.step()
+
+        epsilon = privacy_engine.get_epsilon(delta)
+
+        is_correct_all = torch.cat(is_correct_lst)
+        acc = torch.mean(is_correct_all).item()
+        losses = torch.tensor(losses)
+        avg_loss = losses.mean().item()
+        if logger is not None:
+            logger.info(f"Epoch {epoch} Loss: {avg_loss:.4f} Acc@1: {acc:.4f} (ε = {epsilon:.2f}, δ = {delta})")
+
+
+def evaluation(model, test_loader, device, logger=None):
+    model.eval()
+    is_correct_lst = []
+
+    with torch.no_grad():
+        for images, target in test_loader:
+            images = images.to(device)
+            target = target.to(device)
+
+            output = model(images)
+            _, preds = torch.max(output, 1)
+
+            is_correct = (preds == target)
+            is_correct_lst.append(is_correct)
+
+    is_correct_all = torch.cat(is_correct_lst)
+    acc = is_correct_all.mean().item()
+
+    logger.info(f"\tTest set Acc: {acc:.4f}")

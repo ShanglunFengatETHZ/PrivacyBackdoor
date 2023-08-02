@@ -3,10 +3,11 @@ import torch.nn as nn
 import torch.utils.data as data
 from tools import pass_forward, cal_set_difference_seq
 from data import load_dataset, get_subdataset, get_dataloader
-from adv_model import DiffPrvBackdoorRegistrar, DiffPrvBackdoorMLP
+from adv_model import DiffPrvBackdoorRegistrar, DiffPrvBackdoorMLP, EncoderMLP
 from opacus.validators import ModuleValidator
 from opacus import PrivacyEngine
 import torch.optim as optim
+from train import dp_train_by_epoch, evaluation, train_model
 
 
 def find_bait_by_metric(scores, num_target, bait_candiate=None, sill=0):
@@ -84,11 +85,31 @@ def set_threshold(upperlowerbounds, center=0.6, safe_margin=0.4):
     return threshold, passing_threshold
 
 
-def build_public_model():
-    pass
+def build_public_model(info_dataset, info_model, info_train, logger, cnn_encoder = None, save_path=None):
+    ds_name, ds_path = info_dataset['NAME'], info_dataset['ROOT']
+    is_normalize_ds = info_dataset.get('IS_NORMALIZE', True)
+    train_dataset, test_dataset, resolution, num_classes = load_dataset(ds_path, ds_name, is_normalize=is_normalize_ds)
+
+    # dp-sgd training - related hyper-parameters
+    batch_size, learning_rate, num_epochs = info_train.get('BATCH_SIZE', 1024), info_train.get('LR', 0.1), info_train.get('EPOCHS', 10)
+    device, num_workers, verbose = info_train.get('DEVICE', 'cpu'), info_train.get('NUM_WORKERS', 2), info_train.get('VERBOSE', False)
+
+    # model architecture and initialization related hyper-parameters
+    mlp_sizes = info_model.get('MLP_SIZES', (256, 256))
+    dropout = info_model.get('DROPOUT', None)
+    classifier = EncoderMLP(cnn_encoder, mlp_sizes=mlp_sizes, input_size=(3, resolution, resolution),
+                            num_classes=num_classes, dropout=dropout)
+    optimizer = optim.SGD(classifier.parameters(), lr=learning_rate)
+    train_loader, test_loader = get_dataloader(ds0=train_dataset, ds1=test_dataset, batch_size=batch_size,
+                                               num_workers=num_workers)
+    dataloaders = {'train': train_loader, 'val': test_loader}
+    train_model(classifier, dataloaders, optimizer, num_epochs=num_epochs, device=device, verbose=verbose, logger=logger)
+
+    if save_path is not None:
+        torch.save(classifier.state_dict(), save_path)
 
 
-def build_dp_model(info_dataset, info_model, info_train, info_target, logger, save_path):
+def build_dp_model(info_dataset, info_model, info_train, info_target, logger, cnn_encoder=None, save_path=None):
     # dataset-related hyper-parameters
     ds_name, ds_path = info_dataset['NAME'], info_dataset['ROOT']
     ds_train_subset, ds_estimate_subset = info_dataset.get('SUBSET', None), info_dataset.get('SUBSET_FOR_ESTIMATE', None)
@@ -115,7 +136,6 @@ def build_dp_model(info_dataset, info_model, info_train, info_target, logger, sa
     approach = info_target.get('APPROACH', 'gaussian')
     num_trials = info_target.get('NUM_TRIALS', 100)
 
-    cnn_encoder = None
     dataset_left, targets_img_label, bait, upperlowerbounds = target_sample_selector(cnn_encoder, dataset=train_dataset, num_target=num_targets, approach=approach, num_trials=num_trials,
                            is_debug=False, alpha=info_target.get('ALPHA', None), target_img_indices=info_target.get('TARGET_IMG', None))
 
@@ -144,7 +164,15 @@ def build_dp_model(info_dataset, info_model, info_train, info_target, logger, sa
                                                             noise_multiplier=noise_multiplier, max_grad_norm=max_grad_norm)
     logger.info(f"Using sigma={optimizer.noise_multiplier} and C={max_grad_norm}")
 
-    dataloaders = {'train': train_loader, 'val': test_loader}
+    for epoch in range(num_epochs):
+        dp_train_by_epoch(classifier, train_loader, optimizer, privacy_engine, epoch=epoch, delta=delta, device=device,
+                          max_physical_batch_size=max_physical_batch_size, logger=logger)
+
+    classifier.update_state(epoch)
+    evaluation(classifier, test_loader, device=device, logger=logger)
+
+    if save_path is not None:
+        torch.save(classifier.state_dict(), save_path)
 
 
 if __name__ == '__main__':
