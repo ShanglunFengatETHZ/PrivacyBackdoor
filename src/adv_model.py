@@ -5,15 +5,15 @@ import random
 
 
 class EncoderMLP(nn.Module):
-    # TODO: present results
     def __init__(self, encoder=None, mlp_sizes=None, input_size=(3, 32, 32), num_classes=10, dropout=None):
         super().__init__()
         self.input_size = input_size
+        self.num_classes = num_classes
+
         self.encoder = encoder
 
         assert len(mlp_sizes) == 2, 'the mlp should have two layers'
         self.mlp_sizes = mlp_sizes
-
         if isinstance(dropout, float):
             self.mlp_1stpart = nn.Sequential(nn.Linear(self.get_num_features(), self.mlp_sizes[0]),
                                         nn.ReLU(), nn.Dropout(p=dropout))
@@ -22,12 +22,13 @@ class EncoderMLP(nn.Module):
         else:
             self.mlp_1stpart = nn.Sequential(nn.Linear(self.get_num_features(), self.mlp_sizes[0]), nn.ReLU())
             self.mlp_2ndpart = nn.Sequential(nn.Linear(self.mlp_size[0], self.mlp_sizes[1]), nn.ReLU())
-        self.num_classes = num_classes
-        self.probe = nn.Linear(self.mlp_sizes[1], self.num_classes)
-        self.modules = ['encoder', 'mlp_1stpart', 'mlp_2ndpart', 'probe']
+        self.probe = nn.Linear(self.mlp_sizes[1], self.num_classes)  # the structure is fixed after initialization
+        # later change offer affect the value of each weight
+
+        self.module_names = ['encoder', 'mlp_1stpart', 'mlp_2ndpart', 'probe']
 
     def forward(self, images):
-        features = self(images)
+        features = self.encoder(images)
         u = self.mlp_1stpart(features)
         v = self.mlp_2ndpart(u)
         z = self.probe(v)
@@ -43,19 +44,38 @@ class EncoderMLP(nn.Module):
 
     def load_weight(self, path_to_weights, which_module=None):
         weights = torch.load(path_to_weights, map_location='cpu')
+        assert isinstance(weights, dict), 'the weight should be a dict'
         if which_module is None:
-            which_module = self.modules
+            which_module = self.module_names
+        elif isinstance(which_module, str) and which_module == 'mlp':
+            which_module = self.module_names[1:]
+        elif isinstance(which_module, str):
+            which_module = [which_module]
         else:
-            which_module = [which_module] if isinstance(which_module, str) and which_module in self.modules else which_module
-            assert isinstance(which_module, list), 'the input of which module should be None or a list'
-        for module in which_module:
-            getattr(self, module).load_state_dict(weights)
+            assert isinstance(which_module, list), 'input module that cannot be understood'
 
-    def mlp_parameters(self):
-        encoder_module_names = []
-        for encoder_name, param in self.encoder.named_parameters():
-            encoder_module_names.append(encoder_name)
-        params_encoder = [param for name, param in self.named_parameters() if name not in encoder_module_names]
+        for module in which_module:
+            getattr(self, module).load_state_dict(weights[module])
+
+    def save_weight(self):
+        state_dicts = {}
+        for module in self.module_names:
+            state_dicts[module] = getattr(self, module).state_dict()
+        return state_dicts
+
+    def module_parameters(self, module='mlp'):
+        if module == 'encoder':
+            params = [param for name, param in self.encoder.named_parameters()]
+        elif module == 'mlp':
+            params = [param for mlp_module in self.module_names[1:] for name, param in getattr(self, mlp_module).named_parameters()]
+        else:
+            params = [param for name, param in getattr(self, module).named_parameters()]
+        return params
+
+    def activate_gradient_or_not(self, module='encoder', is_activate=False):
+        params = self.module_parameters(module=module)
+        for param in params:
+            param.requires_grad = is_activate
 
 
 class DiffPrvBackdoorRegistrar:

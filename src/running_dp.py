@@ -173,7 +173,8 @@ def build_dp_model(info_dataset, info_model, info_train, info_target, logger, sa
                           max_physical_batch_size=max_physical_batch_size, logger=logger)
 
     classifier.update_state(epoch)
-    evaluation(classifier, test_loader, device=device, logger=logger)
+    test_acc = evaluation(classifier, test_loader, device=device)
+    logger.info(f"\tTest set Acc: {test_acc:.4f}")
 
     if save_path is not None:
         if save_path[-4] == '.':
@@ -192,7 +193,7 @@ def build_dp_model(info_dataset, info_model, info_train, info_target, logger, sa
         else:
             assert False, 'unparseable saving_path'
 
-        torch.save(classifier.state_dict(), weight_save_path)
+        torch.save(classifier.save_weight(), weight_save_path)
         torch.save(classifier.backdoor_registrar, registrar_save_path)
 
 

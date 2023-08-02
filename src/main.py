@@ -54,16 +54,16 @@ def main():
 
     if mode == 'rcstt':
         info_dataset, info_model, info_train, save_path = args['DATASET'], args['MODEL'], args['TRAIN'], args['SAVE_PATH']
-        build_model(info_dataset, info_model, info_train, logger, save_path)
+        build_model(info_dataset, info_model, info_train, logger=logger, save_path=save_path)
     elif mode == 'stdtr':
         info_dataset, info_model, info_train, save_path = args['DATASET'], args['MODEL'], args['TRAIN'], args['SAVE_PATH']
         build_public_model(info_dataset, info_model, info_train, logger=logger, save_path=save_path)
     elif mode == 'dpbkd':
         info_dataset, info_model, info_train, info_target, save_path = args['DATASET'], args['MODEL'], args['TRAIN'], args['TARGET'], args['SAVE_PATH']
         build_dp_model(info_dataset, info_model, info_train, info_target=info_target, logger=logger, save_path=save_path)
+
     os.rename(path_to_config, config_file)
 
 
 if __name__ == '__main__':
-    # TODO: building bait according to co-matrix that baits are different to other bait as far as possible
-    main()  # TODO: running on GPU
+    main()

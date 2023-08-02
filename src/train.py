@@ -101,8 +101,10 @@ def train_model(model, dataloaders, optimizer, num_epochs, device='cpu', verbose
     return model.to('cpu')
 
 
-def dp_train_by_epoch(model, train_loader, optimizer, privacy_engine, epoch, delta=1e-5, device='cpu', max_physical_batch_size=128,
-                      logger=None):
+def dp_train_by_epoch(model, train_loader, optimizer, privacy_engine, epoch, delta=1e-5,
+                      device='cpu', max_physical_batch_size=128, logger=None):
+    # TODO: keep parameter epoch unchanged?
+    # TODO: can this train function use for other DP-parameter combination
     model.train()
     criterion = nn.CrossEntropyLoss()
 
@@ -138,29 +140,28 @@ def dp_train_by_epoch(model, train_loader, optimizer, privacy_engine, epoch, del
         epsilon = privacy_engine.get_epsilon(delta)
 
         is_correct_all = torch.cat(is_correct_lst)
-        acc = torch.mean(is_correct_all).item()
+        acc = torch.mean(is_correct_all.float()).item()
         losses = torch.tensor(losses)
         avg_loss = losses.mean().item()
         if logger is not None:
             logger.info(f"Epoch {epoch} Loss: {avg_loss:.4f} Acc@1: {acc:.4f} (ε = {epsilon:.2f}, δ = {delta})")
 
 
-def evaluation(model, test_loader, device, logger=None):
+def evaluation(model, test_loader, device):
     model.eval()
     is_correct_lst = []
 
     with torch.no_grad():
-        for images, target in test_loader:
+        for images, labels in test_loader:
             images = images.to(device)
-            target = target.to(device)
+            labels = labels.to(device)
 
-            output = model(images)
-            _, preds = torch.max(output, 1)
+            outputs = model(images)
+            _, preds = torch.max(outputs, 1)
 
-            is_correct = (preds == target)
+            is_correct = (preds == labels)
             is_correct_lst.append(is_correct)
 
     is_correct_all = torch.cat(is_correct_lst)
-    acc = is_correct_all.mean().item()
-
-    logger.info(f"\tTest set Acc: {acc:.4f}")
+    acc = is_correct_all.float().mean().item()
+    return acc
