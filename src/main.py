@@ -5,10 +5,12 @@ import yaml
 import os
 import random
 from running import build_model
+from running_dp import build_public_model, build_dp_model
 
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Please input the configuration files')
+    parser.add_argument('--mode')
     parser.add_argument('--config_name')
     return parser.parse_args()
 
@@ -16,7 +18,9 @@ def parse_args():
 def main():
     args = parse_args()
 
+    mode = args.mode
     config_name = args.config_name
+
     parts = config_name.split('/')
     assert len(parts) <= 2, 'Now NOT support deeper directories'
 
@@ -24,11 +28,11 @@ def main():
     time_stamp = f"{datetime.datetime.now().strftime('%Y%m%d%H%M')}"
 
     if len(parts) == 1:
-        prefix = f'{time_stamp}_{config_name}_{random.randint(1, 100)}'
+        prefix = f'{mode}_{time_stamp}_{config_name}_{random.randint(1, 100)}'
     else:
         path_to_dirt = parts[0]
         file_name = parts[1]
-        prefix = f'{path_to_dirt}/{time_stamp}_{file_name}_{random.randint(1, 100)}'
+        prefix = f'{path_to_dirt}/{mode}_{time_stamp}_{file_name}_{random.randint(1, 100)}'
     config_file = f'experiments/configs/{prefix}.yml'
     log_file = f'experiments/logs/{prefix}.log'
 
@@ -48,9 +52,15 @@ def main():
         args = yaml.load(f, Loader=yaml.FullLoader)
     logger.info('Successfully read the arguments')
 
-    info_dataset, info_model, info_train, save_path = args['DATASET'], args['MODEL'], args['TRAIN'], args['SAVE_PATH']
-    build_model(info_dataset, info_model, info_train, logger, save_path)
-
+    if mode == 'rcstt':
+        info_dataset, info_model, info_train, save_path = args['DATASET'], args['MODEL'], args['TRAIN'], args['SAVE_PATH']
+        build_model(info_dataset, info_model, info_train, logger, save_path)
+    elif mode == 'stdtr':
+        info_dataset, info_model, info_train, save_path = args['DATASET'], args['MODEL'], args['TRAIN'], args['SAVE_PATH']
+        build_public_model(info_dataset, info_model, info_train, logger=logger, save_path=save_path)
+    elif mode == 'dpbkd':
+        info_dataset, info_model, info_train, info_target, save_path = args['DATASET'], args['MODEL'], args['TRAIN'], args['TARGET'], args['SAVE_PATH']
+        build_dp_model(info_dataset, info_model, info_train, info_target=info_target, logger=logger, save_path=save_path)
     os.rename(path_to_config, config_file)
 
 

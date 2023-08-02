@@ -132,7 +132,6 @@ class DiffPrvBackdoorRegistrar:
 
         return lst_u_byepoch, lst_v_byepoch
 
-
     def get_change_by_activation(self):
         print(f'the length of activation log is {len(self.activation_log)}')
         print(f'the length of bu bkd log is {len(self.bu_bkd_log)}')  # bu_log should be activation log + 1
@@ -143,6 +142,7 @@ class DiffPrvBackdoorRegistrar:
         inactivation_change = delta_bu_bkd[torch.logical_not(activation_table)]
         print(f'activation change mean value:{activation_change.mean()}, variance:{activation_change.var()}')
         print(f'activation change mean value:{inactivation_change.mean()}, variance:{inactivation_change.var()}')
+        return activation_change, inactivation_change
 
 
 class DiffPrvBackdoorMLP(EncoderMLP):
@@ -166,7 +166,7 @@ class DiffPrvBackdoorMLP(EncoderMLP):
     def vanilla_initialize(self, encoder_scaling_module_idx=-1, weights=None, thresholds=None, passing_threshold=None, factors=None):
         # TODO: requires no gradient
         # requires no grad for encoder
-        self.scale_encoder_output(idx_module=encoder_scaling_module_idx, scaling_factor=factors.get('encoder',1.0))
+        self.scale_encoder_output(idx_module=encoder_scaling_module_idx, scaling_factor=factors.get('encoder', 1.0))
         self.pass_feature_and_build_activation(self.mlp_1stpart[0], indices_bkd=self.backdoor_registrar.indices_bkd_u,
                                                weights=weights, thresholds=thresholds, passing_scaling_factor=factors.get('features_passing', 1.0),
                                                weight_factor=factors.get('bait', 1.0))

@@ -85,7 +85,7 @@ def set_threshold(upperlowerbounds, center=0.6, safe_margin=0.4):
     return threshold, passing_threshold
 
 
-def build_public_model(info_dataset, info_model, info_train, logger, cnn_encoder = None, save_path=None):
+def build_public_model(info_dataset, info_model, info_train, logger, save_path=None):
     ds_name, ds_path = info_dataset['NAME'], info_dataset['ROOT']
     is_normalize_ds = info_dataset.get('IS_NORMALIZE', True)
     train_dataset, test_dataset, resolution, num_classes = load_dataset(ds_path, ds_name, is_normalize=is_normalize_ds)
@@ -95,6 +95,8 @@ def build_public_model(info_dataset, info_model, info_train, logger, cnn_encoder
     device, num_workers, verbose = info_train.get('DEVICE', 'cpu'), info_train.get('NUM_WORKERS', 2), info_train.get('VERBOSE', False)
 
     # model architecture and initialization related hyper-parameters
+    cnn_encoder_modules = info_model.get('CNN_ENCODER', None)
+    cnn_encoder = nn.Sequential(*[eval('nn.' + cnn_module) for cnn_module in cnn_encoder_modules])
     mlp_sizes = info_model.get('MLP_SIZES', (256, 256))
     dropout = info_model.get('DROPOUT', None)
     classifier = EncoderMLP(cnn_encoder, mlp_sizes=mlp_sizes, input_size=(3, resolution, resolution),
@@ -109,7 +111,7 @@ def build_public_model(info_dataset, info_model, info_train, logger, cnn_encoder
         torch.save(classifier.state_dict(), save_path)
 
 
-def build_dp_model(info_dataset, info_model, info_train, info_target, logger, cnn_encoder=None, save_path=None):
+def build_dp_model(info_dataset, info_model, info_train, info_target, logger, save_path=None):
     # dataset-related hyper-parameters
     ds_name, ds_path = info_dataset['NAME'], info_dataset['ROOT']
     ds_train_subset, ds_estimate_subset = info_dataset.get('SUBSET', None), info_dataset.get('SUBSET_FOR_ESTIMATE', None)
@@ -126,9 +128,11 @@ def build_dp_model(info_dataset, info_model, info_train, info_target, logger, cn
     # train_random_seed = info_train.get('RANDOM_SEED', 12345678)
 
     # model architecture and initialization related hyper-parameters
+    cnn_encoder_modules = info_model.get('CNN_ENCODER', None)
+    cnn_encoder = nn.Sequential(*[eval('nn.' + cnn_module) for cnn_module in cnn_encoder_modules])
     mlp_sizes = info_model.get('MLP_SIZES', (256, 256))
     indices_bkd_u, indices_bkd_v = torch.tensor(info_model.get('INDICES_BKD_U', [-1])), torch.tensor(info_model.get('INDICES_BKD_V', [-1]))
-    encoder_scaling_module_idx = info_model.get('encoder_scaling_module_idx', -1)
+    encoder_scaling_module_idx = info_model.get('ENCODER_SCALING_MODULE', -1)
     multipliers = info_model.get('MULTIPLIERS', {})
 
     has_membership = info_target.get('HAS_MEMBERSHIP', True)
@@ -172,7 +176,24 @@ def build_dp_model(info_dataset, info_model, info_train, info_target, logger, cn
     evaluation(classifier, test_loader, device=device, logger=logger)
 
     if save_path is not None:
-        torch.save(classifier.state_dict(), save_path)
+        if save_path[-4] == '.':
+            assert save_path[-3:] == 'pth', 'WRONG saving suffix'
+            prefix = save_path[:-4]
+            weight_save_path = f'{prefix}_weight.pth'
+            registrar_save_path = f'{prefix}_regis.pth'
+        elif save_path[-3] == '.':
+            assert save_path[-2:] == 'pt', 'WRONG saving suffix'
+            prefix = save_path[:-3]
+            weight_save_path = f'{prefix}_weight.pt'
+            registrar_save_path = f'{prefix}_regis.pt'
+        elif '.' not in save_path:
+            weight_save_path = f'{save_path}_weight.pth'
+            registrar_save_path = f'{save_path}_regis.pt'
+        else:
+            assert False, 'unparseable saving_path'
+
+        torch.save(classifier.state_dict(), weight_save_path)
+        torch.save(classifier.backdoor_registrar, registrar_save_path)
 
 
 if __name__ == '__main__':
