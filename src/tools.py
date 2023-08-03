@@ -337,7 +337,7 @@ def reshape_weight_to_sub_image(weight, image_channel, image_height, image_width
 
 
 def cal_set_difference_seq(n, indices):
-    x = torch.zeros(n).tolist()
+    x = torch.zeros(n)
     x[indices] = 1.0
     is_complement = (x < 0.5)
     all_indices = torch.arange(n)

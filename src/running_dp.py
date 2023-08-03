@@ -108,11 +108,12 @@ def build_public_model(info_dataset, info_model, info_train, logger, save_path=N
     train_model(classifier, dataloaders, optimizer, num_epochs=num_epochs, device=device, verbose=verbose, logger=logger)
 
     if save_path is not None:
-        torch.save(classifier.state_dict(), save_path)
+        torch.save(classifier.save_weight(), save_path)
 
 
 def build_dp_model(info_dataset, info_model, info_train, info_target, logger, save_path=None):
     # dataset-related hyper-parameters
+    # TODO: information about encoder, set requires_grad, ....
     ds_name, ds_path = info_dataset['NAME'], info_dataset['ROOT']
     ds_train_subset, ds_estimate_subset = info_dataset.get('SUBSET', None), info_dataset.get('SUBSET_FOR_ESTIMATE', None)
     is_normalize_ds = info_dataset.get('IS_NORMALIZE', True)
