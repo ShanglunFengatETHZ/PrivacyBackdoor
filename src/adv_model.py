@@ -4,6 +4,7 @@ from tools import cal_set_difference_seq
 import random
 from collections import Counter
 
+
 class EncoderMLP(nn.Module):
     def __init__(self, encoder=None, mlp_sizes=None, input_size=(3, 32, 32), num_classes=10, dropout=None):
         super().__init__()
@@ -107,6 +108,7 @@ class DiffPrvBackdoorRegistrar:
         # TODO: many assert to guarantee correctness.
         # TODO: deal with different input dimension of backdoor
         # TODO: how to make sure that u,v, target are one-to-one correspondence
+        # TODO: what to do with the coupling of
         # this should have the ability to generate target_image and target labels.
         self.num_bkd = num_bkd
         self.m_u, self.m_v = m_u, m_v
@@ -219,7 +221,11 @@ class DiffPrvBackdoorMLP(EncoderMLP):
         v = self.mlp_2ndpart(u)
         z = self.probe(v)
         self.backdoor_registrar.update_output_log(u, v)
+
         return z
+
+    def update_backdoor_registrar(self, backdoor_registrar):
+        self.backdoor_registrar = backdoor_registrar
 
     def update_state(self):
         self.backdoor_registrar.update_state(self.mlp_1stpart[0].bias)
@@ -234,6 +240,9 @@ class DiffPrvBackdoorMLP(EncoderMLP):
 
         self._pass_ft_build_act(self.mlp_1stpart[0], indices_bkd=u_indices_bkd, baits=baits, thresholds=thresholds,
                                 ft_passing_multiplier=multipliers.get('features_passing', 1.0), bait_multiplier=multipliers.get('bait', 1.0))
+
+        nn.init.xavier_normal_(self.mlp_2ndpart[0].weight)
+        self.mlp_2ndpart[0].bias.data[:] = 0.
         self._lock_ft_pass_act(self.mlp_2ndpart[0], u_indices_bkd=u_indices_bkd, v_indices_bkd=v_indices_bkd, passing_threshold=passing_threshold,
                                lock_multiplier=multipliers.get('features_lock', 1.0), act_passing_multiplier=multipliers.get('activation_passing', 1.0))
 
@@ -242,6 +251,8 @@ class DiffPrvBackdoorMLP(EncoderMLP):
             complement_set = cal_set_difference_seq(self.num_classes, self.backdoor_registrar.labels[j])
             complement_set = complement_set.tolist()
             classes_connect.append(random.choice(complement_set))
+        nn.init.xavier_normal_(self.probe.weight)
+        self.probe.bias.data[:] = 0.
         self._act_connect(self.probe, indices_bkd=v_indices_bkd, wrong_classes=classes_connect, act_connect_multiplier=multipliers.get('act_connect', 1.0))
 
         self.activate_gradient_or_not('encoder', is_activate=False)

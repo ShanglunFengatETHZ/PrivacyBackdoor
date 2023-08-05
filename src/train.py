@@ -118,7 +118,7 @@ def dp_train_by_epoch(model, train_loader, optimizer, privacy_engine, epoch, del
     ) as memory_safe_data_loader:
 
         for i, (images, target) in enumerate(memory_safe_data_loader):
-            model.update_state(epoch)
+            model.update_state()
             optimizer.zero_grad()
             images = images.to(device)
             target = target.to(device)
@@ -143,8 +143,8 @@ def dp_train_by_epoch(model, train_loader, optimizer, privacy_engine, epoch, del
         acc = torch.mean(is_correct_all.float()).item()
         losses = torch.tensor(losses)
         avg_loss = losses.mean().item()
-        if logger is not None:
-            logger.info(f"Epoch {epoch} Loss: {avg_loss:.4f} Acc@1: {acc:.4f} (ε = {epsilon:.2f}, δ = {delta})")
+    if logger is not None:
+        logger.info(f"Epoch {epoch} Loss: {avg_loss:.4f} Acc@1: {acc:.4f} (ε = {epsilon:.3f}, δ = {delta})")
 
 
 def evaluation(model, test_loader, device):
