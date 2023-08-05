@@ -5,10 +5,19 @@ import torchvision.transforms as transforms
 from tools import setdiff1d
 
 
-def load_dataset(root, dataset, is_normalize=False, resize=None):
+def load_dataset(root, dataset, is_normalize=False, resize=None, is_augment=False):
     if dataset == 'cifar100':
-        train_dataset = datasets.CIFAR100(root, train=True, transform=transforms.ToTensor(), download=False)
-        test_dataset = datasets.CIFAR100(root, train=False, transform=transforms.ToTensor(), download=False)
+        transform_lst = []
+        if is_augment:
+            transform_lst.append(transforms.RandomHorizontalFlip())
+            transform_lst.append(transforms.RandomRotation(20))
+            transform_lst.append(transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2))
+
+        transform_lst.append(transforms.ToTensor())
+        if is_normalize:
+            transform_lst.append(transforms.Normalize(mean=(0.5071, 0.4867, 0.4408), std=(0.2675, 0.2565, 0.2761)))
+        train_dataset = datasets.CIFAR100(root, train=True, transform=transforms.Compose(transform_lst), download=False)
+        test_dataset = datasets.CIFAR100(root, train=False, transform=transforms.Compose(transform_lst[-2:]), download=False)
         resolution = 32
         classes = 100
     elif dataset == 'imagenet':

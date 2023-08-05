@@ -37,7 +37,8 @@ def train_model(model, dataloaders, optimizer, num_epochs, device='cpu', verbose
 
             # Iterate over data.
             for i, this_batch in enumerate(dataloader):
-                print(f'batch {i}')
+                if verbose:
+                    print(f'batch {i}')
                 inputs, labels = this_batch
                 if direct_resize is not None:
                     big_inputs = torch.zeros(inputs.shape[0], inputs.shape[1], direct_resize, direct_resize)
@@ -71,7 +72,9 @@ def train_model(model, dataloaders, optimizer, num_epochs, device='cpu', verbose
                     wt_change, bs_change = model.show_weight_bias_change()
                     print(f'bkd delta weight:{wt_change}')
                     print(f'bkd delta bias:{bs_change}')
-                print(f'phase:{phase}, max logits:{outputs.max()}, min logits:{outputs.min()}, variance:{outputs.var(dim=0)}')
+
+                if verbose:
+                    print(f'phase:{phase}, max logits:{outputs.max()}, min logits:{outputs.min()}, variance:{outputs.var(dim=0)}')
                 """
                 with torch.no_grad():
                     if hasattr(model, 'model0'):

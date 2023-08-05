@@ -18,11 +18,11 @@ class EncoderMLP(nn.Module):
         if isinstance(dropout, float):
             self.mlp_1stpart = nn.Sequential(nn.Linear(self.get_num_features(), self.mlp_sizes[0]),
                                         nn.ReLU(), nn.Dropout(p=dropout))
-            self.mlp_2ndpart = nn.Sequential(nn.Linear(self.mlp_size[0], self.mlp_sizes[1]),
+            self.mlp_2ndpart = nn.Sequential(nn.Linear(self.mlp_sizes[0], self.mlp_sizes[1]),
                                         nn.ReLU(), nn.Dropout(p=dropout))
         else:
             self.mlp_1stpart = nn.Sequential(nn.Linear(self.get_num_features(), self.mlp_sizes[0]), nn.ReLU())
-            self.mlp_2ndpart = nn.Sequential(nn.Linear(self.mlp_size[0], self.mlp_sizes[1]), nn.ReLU())
+            self.mlp_2ndpart = nn.Sequential(nn.Linear(self.mlp_sizes[0], self.mlp_sizes[1]), nn.ReLU())
         self.probe = nn.Linear(self.mlp_sizes[1], self.num_classes)  # the structure is fixed after initialization
         # later change offer affect the value of each weight
 

@@ -135,7 +135,7 @@ def path_decorator(save_path, suffix=''):
 def build_public_model(info_dataset, info_model, info_train, logger, save_path=None):
     ds_name, ds_path = info_dataset['NAME'], info_dataset['ROOT']
     is_normalize_ds = info_dataset.get('IS_NORMALIZE', True)
-    train_dataset, test_dataset, resolution, num_classes = load_dataset(ds_path, ds_name, is_normalize=is_normalize_ds)
+    train_dataset, test_dataset, resolution, num_classes = load_dataset(ds_path, ds_name, is_normalize=is_normalize_ds, is_augment=True)
 
     # dp-sgd training - related hyper-parameters
     batch_size, learning_rate, num_epochs = info_train.get('BATCH_SIZE', 1024), info_train.get('LR', 0.1), info_train.get('EPOCHS', 10)
@@ -148,6 +148,8 @@ def build_public_model(info_dataset, info_model, info_train, logger, save_path=N
     dropout = info_model.get('DROPOUT', None)
     classifier = EncoderMLP(cnn_encoder, mlp_sizes=mlp_sizes, input_size=(3, resolution, resolution),
                             num_classes=num_classes, dropout=dropout)
+    classifier.activate_gradient_or_not(module='encoder', is_activate=True)
+    classifier.activate_gradient_or_not(module='mlp', is_activate=True)
     optimizer = optim.SGD(classifier.parameters(), lr=learning_rate)
     train_loader, test_loader = get_dataloader(ds0=train_dataset, ds1=test_dataset, batch_size=batch_size,
                                                num_workers=num_workers)
@@ -259,9 +261,10 @@ def build_dp_model(info_dataset, info_model, info_train, info_target, logger=Non
         dp_train(num_epochs, classifier, safe_train_loader, test_loader, optimizer, privacy_engine=privacy_engine, delta=delta, device=device,
                  max_physical_batch_size=max_physical_batch_size, logger=logger)
 
-        wgt_save_path, rgs_save_path = path_decorator(save_path, f'_ex{j}')
-        torch.save(classifier.save_weight(), wgt_save_path)
-        torch.save(classifier.backdoor_registrar, rgs_save_path)
+        if save_path is not None:
+            wgt_save_path, rgs_save_path = path_decorator(save_path, f'_ex{j}')
+            torch.save(classifier.save_weight(), wgt_save_path)
+            torch.save(classifier.backdoor_registrar, rgs_save_path)
 
 
 if __name__ == '__main__':
