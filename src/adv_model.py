@@ -131,7 +131,9 @@ class DiffPrvBackdoorRegistrar:
 
         self.epoch = -1
         self.eps = 1e-5
-        self.target_images, self.target_labels = target_image_label
+
+        self.target_images = [target_img_lb[0] for target_img_lb in target_image_label]
+        self.target_labels = [target_img_lb[1] for target_img_lb in target_image_label]
 
     def update_epoch(self, epoch):
         assert epoch - self.epoch == 1, 'wrong update'
@@ -248,7 +250,7 @@ class DiffPrvBackdoorMLP(EncoderMLP):
 
         classes_connect = []
         for j in range(self.backdoor_registrar.num_bkd):
-            complement_set = cal_set_difference_seq(self.num_classes, self.backdoor_registrar.labels[j])
+            complement_set = cal_set_difference_seq(self.num_classes, self.backdoor_registrar.target_labels[j])
             complement_set = complement_set.tolist()
             classes_connect.append(random.choice(complement_set))
         nn.init.xavier_normal_(self.probe.weight)
@@ -292,5 +294,5 @@ class DiffPrvBackdoorMLP(EncoderMLP):
         assert len(indices_bkd) == len(wrong_classes), 'for vanilla probe, the number of backdoor should be the same as the number of classes'
         for j, idx in enumerate(indices_bkd):
             module.weight.data[:, idx] = 0.0
-            module.bias.data[idx] = 0.0
+            module.bias.data[:] = 0.0
             module.weight.data[wrong_classes[j], idx] = act_connect_multiplier

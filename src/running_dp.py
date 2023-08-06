@@ -65,11 +65,10 @@ def target_sample_selector(model, dataset, num_target=1, approach='gaussian', ap
     else:
         target_img_indices, baits_candidate, upperlowerbounds = None, None, None
     indices_selected = random.sample([j for j in range(len(target_img_indices))], num_target)
-    target_img_indices, baits_candidate, upperlowerbounds = target_img_indices[indices_selected], baits_candidate[indices_selected], \
+    target_img_indices, baits, upperlowerbounds = target_img_indices[indices_selected], baits_candidate[indices_selected], \
                                                             (upperlowerbounds[0][indices_selected], upperlowerbounds[1][indices_selected])
 
-    targets_image_label = [dataset[idx] for idx in target_img_indices]
-    return targets_image_label, baits_candidate, upperlowerbounds
+    return target_img_indices, baits, upperlowerbounds
 
 
 def get_dataset_complement(dataset, target_img_indices):
@@ -80,28 +79,42 @@ def get_dataset_complement(dataset, target_img_indices):
     return dataset_left
 
 
-def check_match(num_targets, encoder, targets_image_label, baits_candidate, upperlowerbounds): # use a small linear layer to do this
-    largest = upperlowerbounds[0]
-    image, label = targets_image_label[0]
+def make_toy_backdoor_tester(num_targets, encoder, baits, input_sizes=(3, 32, 32)):
+    image = torch.rand(input_sizes)
+    image = image.unsqueeze(dim=0)
     features = encoder(image)
     num_features = features.shape[1]
     backdoor = nn.Linear(num_features, num_targets)
 
     for j in range(num_targets):
-        backdoor.weights.data[j] = baits_candidate[j]
+        backdoor.weight.data[j] = baits[j]
         backdoor.bias.data[j] = 0.0
 
     toy_md = nn.Sequential(encoder, backdoor)
+    return toy_md
+
+
+def check_match(num_targets, encoder, targets_image_label, baits, upperlowerbounds): # use a small linear layer to do this
+    largest = upperlowerbounds[0]
+    toy_md = make_toy_backdoor_tester(num_targets=num_targets, encoder=encoder, baits=baits, input_sizes=targets_image_label[0][0].shape)
 
     signals = []
     with torch.no_grad():
         for j in range(num_targets):
             image, label = targets_image_label[j]
-            image = image.unsqueeze()
+            image = image.unsqueeze(dim=0)
             signal = toy_md(image)
-            signals.append(signal[0,j])
+            signals.append(signal[0, j].unsqueeze(dim=0))
     signals = torch.cat(signals)
     return torch.norm(signals - largest)
+
+
+def check_largest(num_targets, encoder, baits, upperlowerbounds, dataset):
+    toy_md = make_toy_backdoor_tester(num_targets=num_targets, encoder=encoder, input_sizes=dataset[0][0].shape, baits=baits)
+    dl = data.DataLoader(dataset, batch_size=128, shuffle=False, num_workers=2)
+    features, labels = pass_forward(toy_md, dl, return_label=True)
+    top2, _ = features.topk(2, dim=0)
+    return top2[0] - upperlowerbounds[0], top2[1] - upperlowerbounds[1]
 
 
 def set_threshold(upperlowerbounds, threshold_quantile=0.9, passing_threshold_quantile=0.1):
@@ -155,6 +168,7 @@ def build_public_model(info_dataset, info_model, info_train, logger, save_path=N
                                                num_workers=num_workers)
     dataloaders = {'train': train_loader, 'val': test_loader}
     train_model(classifier, dataloaders, optimizer, num_epochs=num_epochs, device=device, verbose=verbose, logger=logger)
+    classifier = classifier.to('cpu')
 
     if save_path is not None:
         torch.save(classifier.save_weight(), save_path)
@@ -179,7 +193,7 @@ def build_dp_model(info_dataset, info_model, info_train, info_target, logger=Non
     train_dataset, _ = get_subdataset(train_dataset, p=ds_train_subset)
 
     # dp-sgd training - related hyper-parameters
-    batch_size, max_physical_batch_size = info_train.get['BATCH_SIZE'], info_train['MAX_PHYSICAL_BATCH_SIZE']   # training
+    batch_size, max_physical_batch_size = info_train['BATCH_SIZE'], info_train['MAX_PHYSICAL_BATCH_SIZE']   # training
     is_with_epsilon = info_train['IS_WITH_EPSILON']
     max_grad_norm, epsilon, delta, noise_multiplier = info_train['MAX_GRAD_NORM'], info_train.get('EPSILON', None), info_train['DELTA'], info_train.get('NOISE_MULTIPLIER', None)
     learning_rate, num_epochs = info_train['LR'], info_train['EPOCHS']
@@ -198,23 +212,25 @@ def build_dp_model(info_dataset, info_model, info_train, info_target, logger=Non
     # bacdoor bait construction
     approach = info_backdoor['BAIT_CONSTRUCTION'].get('APPROACH', 'gaussian')
     approach_param = info_backdoor['BAIT_CONSTRUCTION'].get('APPROACH_PARAM', {})
-    threshold_quantile, passing_threshold_quantile = info_backdoor['BAIT_CONSTRUCTION']['THRESHOLD'], info_backdoor['BAIT_CONSTRUCTION']['PASSING_THRESHOLD']
+    threshold_quantile, passing_threshold_quantile = info_backdoor['BAIT_CONSTRUCTION']['Q_THRESHOLD'], info_backdoor['BAIT_CONSTRUCTION']['Q_PASSING_THRESHOLD']
 
     # trial related hyper-parameters
     num_experiments = info_target.get('NUM_EXPERIMENTS', 1)
-    has_membership = info_target.get['HAS_MEMBERSHIP']
+    has_membership = info_target['HAS_MEMBERSHIP']
     num_targets = info_target.get('NUM_TARGETS', 1)
     target_img_indices = info_target.get('TARGET_IMG_INDICES', None)
     if approach == 'self':
         approach_param['target_img_indices'] = target_img_indices
     logger.info(f'There are {num_bkd} backdoors and {num_targets} target images')
 
-    targets_img_label, baits, upperlowerbounds = target_sample_selector(cnn_encoder, dataset=train_dataset, num_target=num_targets, approach=approach, approach_param=approach_param)
-    mismatch_metric = check_match(num_targets=num_targets, encoder=cnn_encoder, targets_image_label=targets_img_label,
-                                  baits_candidate=baits, upperlowerbounds=upperlowerbounds)
-    assert mismatch_metric > 1e-5, 'the image, bait, bound do NOT match'
+    cnn_encoder.load_state_dict(torch.load(pretrain_path, map_location='cpu')['encoder'])
+    target_img_indices, baits, upperlowerbounds = target_sample_selector(cnn_encoder, dataset=train_dataset, num_target=num_targets, approach=approach, approach_param=approach_param)
+    targets_image_label = [train_dataset[idx] for idx in target_img_indices]
+    mismatch_metric = check_match(num_targets=num_targets, encoder=cnn_encoder, targets_image_label=targets_image_label,
+                                  baits=baits, upperlowerbounds=upperlowerbounds)
+    assert mismatch_metric < 1e-4, 'the image, bait, bound do NOT match'
 
-    dataset_disappear = get_dataset_complement(dataset=train_dataset, target_img_indices=targets_img_label)
+    dataset_disappear = get_dataset_complement(dataset=train_dataset, target_img_indices=target_img_indices)
     train_loader_appear, test_loader = get_dataloader(ds0=train_dataset, ds1=test_dataset, batch_size=batch_size, num_workers=num_workers)
     train_loader_disappear = get_dataloader(ds0=dataset_disappear, batch_size=batch_size, num_workers=num_workers)
 
@@ -230,7 +246,7 @@ def build_dp_model(info_dataset, info_model, info_train, info_target, logger=Non
     errors = ModuleValidator.validate(classifier, strict=False)
     logger.info(errors)
 
-    optimizer = optim.SGD(classifier.mlp_parameters(), lr=learning_rate)
+    optimizer = optim.SGD(classifier.module_parameters(module='mlp'), lr=learning_rate)
 
     for j in range(num_experiments): # TODO: control times for the training and random number related to it
         logger.info(f'EXPERIMENTS {j}:')
@@ -245,7 +261,7 @@ def build_dp_model(info_dataset, info_model, info_train, info_target, logger=Non
         logger.info(f'HAS MEMBERSHIP? {has_membership_this_experiment}, length of {len(train_loader.dataset)}')
 
         backdoor_registrar = DiffPrvBackdoorRegistrar(num_bkd=num_bkd, indices_bkd_u=indices_bkd_u,indices_bkd_v=indices_bkd_v,
-                                                      m_u=mlp_sizes[0], m_v=mlp_sizes[1], target_image_label=targets_img_label)
+                                                      m_u=mlp_sizes[0], m_v=mlp_sizes[1], target_image_label=targets_image_label)
         classifier.update_backdoor_registrar(backdoor_registrar)
         classifier.vanilla_initialize(**initialization_information)
 
@@ -261,6 +277,7 @@ def build_dp_model(info_dataset, info_model, info_train, info_target, logger=Non
         dp_train(num_epochs, classifier, safe_train_loader, test_loader, optimizer, privacy_engine=privacy_engine, delta=delta, device=device,
                  max_physical_batch_size=max_physical_batch_size, logger=logger)
 
+        classifier = classifier.to('cpu')
         if save_path is not None:
             wgt_save_path, rgs_save_path = path_decorator(save_path, f'_ex{j}')
             torch.save(classifier.save_weight(), wgt_save_path)
@@ -269,12 +286,17 @@ def build_dp_model(info_dataset, info_model, info_train, info_target, logger=Non
 
 if __name__ == '__main__':
     ds_path = '../../cifar10'
-    cnn_encoder = nn.Sequential(
-        nn.Conv2d(3, 32, kernel_size=5, stride=2, padding=1), nn.ReLU(),
-        nn.MaxPool2d(kernel_size=3, stride=2),
-        nn.Conv2d(32, 96, kernel_size=3, stride=2), nn.ReLU(),
-        nn.MaxPool2d(kernel_size=3, stride=2), nn.Flatten()
-    )
-    # tr_ds, test_ds, resolution, classes = load_dataset(ds_path, 'cifar10', is_normalize=True)
-    # tr_ds_left, target_img, bait, upperlowerbounds = target_sample_selector(cnn_encoder, dataset=tr_ds, num_target=1, approach='gaussian', num_trials=100, is_debug=True)
+    md_path = './weights/pretr_cifar100.pth'
+    md_weights = torch.load(md_path, map_location='cpu')
+    num_targets = 10
+    cnn_encoder = nn.Sequential(nn.Conv2d(3, 64, kernel_size=5, stride=2, padding=2), nn.ReLU(),
+                                 nn.MaxPool2d(kernel_size=3, stride=2, padding=1), nn.Conv2d(64, 64, kernel_size=3, stride=2, padding=1),
+                                 nn.ReLU(), nn.MaxPool2d(kernel_size=3, stride=2, padding=1), nn.Flatten())
+    cnn_encoder.load_state_dict(md_weights['encoder'])
+    tr_ds, test_ds, resolution, classes = load_dataset(ds_path, 'cifar10', is_normalize=True)
+    targets_image_label, baits, upperlowerbounds = target_sample_selector(cnn_encoder, dataset=tr_ds, num_target=num_targets, approach='gaussian', approach_param={'num_cast_bait': 1000, 'sill': 5.0})
+    # eps_hat = check_match(num_targets=num_targets, encoder=cnn_encoder, targets_image_label=targets_image_label, baits=baits, upperlowerbounds=upperlowerbounds)
+    # print(eps_hat)
+    top1_diff, top2_diff = check_largest(num_targets=num_targets, encoder=cnn_encoder, baits=baits, upperlowerbounds=upperlowerbounds, dataset=tr_ds)
+    print(top1_diff, top2_diff)
 
