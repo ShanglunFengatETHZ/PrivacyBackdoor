@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.utils.data as data
 from tools import pass_forward, cal_set_difference_seq
 from data import load_dataset, get_subdataset, get_dataloader
-from adv_model import DiffPrvBackdoorRegistrar, DiffPrvBackdoorMLP, EncoderMLP
+from adv_model import DiffPrvBackdoorRegistrar, InitEncoderMLP, EncoderMLP, modifygradsamplemodule
 from opacus.validators import ModuleValidator
 from opacus import PrivacyEngine
 import torch.optim as optim
@@ -186,6 +186,8 @@ def dp_train(num_epochs, classifier, train_loader, test_loader, optimizer, priva
 
 def build_dp_model(info_dataset, info_model, info_train, info_target, logger=None, save_path=None):
     # TODO: to make sure that the read data belongs to our hope, no so much default value
+    # TODO: wrap the wapper of model to have the written interface
+    # TODO: check the weight, whether we have set it correctly?
     # dataset-related hyper-parameters
     ds_name, ds_path = info_dataset['NAME'], info_dataset['ROOT']
     ds_train_subset, is_normalize_ds = info_dataset.get('SUBSET', None), info_dataset.get('IS_NORMALIZE', True)
@@ -197,7 +199,7 @@ def build_dp_model(info_dataset, info_model, info_train, info_target, logger=Non
     is_with_epsilon = info_train['IS_WITH_EPSILON']
     max_grad_norm, epsilon, delta, noise_multiplier = info_train['MAX_GRAD_NORM'], info_train.get('EPSILON', None), info_train['DELTA'], info_train.get('NOISE_MULTIPLIER', None)
     learning_rate, num_epochs = info_train['LR'], info_train['EPOCHS']
-    device, num_workers = info_train['DEVICE'], info_train.get('NUM_WORKERS', 2)
+    device, num_workers = info_train['DEVICE'], info_train.get('NUM_WORKERS', 0)
 
     # model architecture and initialization related hyper-parameters
     cnn_encoder_modules, mlp_sizes = info_model['CNN_ENCODER'], info_model['MLP_SIZES']
@@ -231,24 +233,24 @@ def build_dp_model(info_dataset, info_model, info_train, info_target, logger=Non
     assert mismatch_metric < 1e-4, 'the image, bait, bound do NOT match'
 
     dataset_disappear = get_dataset_complement(dataset=train_dataset, target_img_indices=target_img_indices)
-    train_loader_appear, test_loader = get_dataloader(ds0=train_dataset, ds1=test_dataset, batch_size=batch_size, num_workers=num_workers)
+    train_loader_appear, test_loader = get_dataloader(ds0=train_dataset, ds1=test_dataset, batch_size=batch_size, num_workers=num_workers) # https://github.com/pyg-team/pytorch_geometric/issues/366
     train_loader_disappear = get_dataloader(ds0=dataset_disappear, batch_size=batch_size, num_workers=num_workers)
 
     threshold, passing_threshold = set_threshold(upperlowerbounds, threshold_quantile=threshold_quantile, passing_threshold_quantile=passing_threshold_quantile)
     initialization_information = {'encoder_scaling_module_idx': encoder_scaling_module_idx, 'baits':baits, 'thresholds':threshold,
-                                  'passing_threshold':passing_threshold, 'multipliers':multipliers}
+                                  'passing_threshold': passing_threshold, 'multipliers':multipliers}
     logger.info(f'upper bounds:{upperlowerbounds[0]}\n lower bounds:{upperlowerbounds[1]}\n threshold:{threshold}\n passing threshold:{passing_threshold}')
     logger.info(f'multipliers:{multipliers}')
 
-    classifier = DiffPrvBackdoorMLP(encoder=cnn_encoder, mlp_sizes=mlp_sizes, input_size=(3, resolution, resolution),
-                                    num_classes=num_classes, backdoor_registrar=None)
+    classifier = InitEncoderMLP(encoder=cnn_encoder, mlp_sizes=mlp_sizes, input_size=(3, resolution, resolution),
+                                    num_classes=num_classes)
     classifier.load_weight(pretrain_path, which_module='encoder')
     errors = ModuleValidator.validate(classifier, strict=False)
     logger.info(errors)
 
     optimizer = optim.SGD(classifier.module_parameters(module='mlp'), lr=learning_rate)
 
-    for j in range(num_experiments): # TODO: control times for the training and random number related to it
+    for j in range(num_experiments):  # TODO: control times for the training and random number related to it
         logger.info(f'EXPERIMENTS {j}:')
         if isinstance(has_membership, bool):
             has_membership_this_experiment = has_membership
@@ -262,26 +264,28 @@ def build_dp_model(info_dataset, info_model, info_train, info_target, logger=Non
 
         backdoor_registrar = DiffPrvBackdoorRegistrar(num_bkd=num_bkd, indices_bkd_u=indices_bkd_u,indices_bkd_v=indices_bkd_v,
                                                       m_u=mlp_sizes[0], m_v=mlp_sizes[1], target_image_label=targets_image_label)
-        classifier.update_backdoor_registrar(backdoor_registrar)
-        classifier.vanilla_initialize(**initialization_information)
-
+        classifier.vanilla_initialize(**initialization_information, backdoor_registrar=backdoor_registrar)
         privacy_engine = PrivacyEngine()
         if is_with_epsilon:
-            classifier, optimizer, safe_train_loader = privacy_engine.make_private_with_epsilon(module=classifier, optimizer=optimizer, data_loader=train_loader,
-                                                                                                epochs=num_epochs, target_epsilon=epsilon, target_delta=delta, max_grad_norm=max_grad_norm)
+            safe_classifier, safe_optimizer, safe_train_loader = privacy_engine.make_private_with_epsilon(module=classifier, optimizer=optimizer, data_loader=train_loader,
+                                                                                       epochs=num_epochs, target_epsilon=epsilon, target_delta=delta, max_grad_norm=max_grad_norm)
         else:
-            classifier, optimizer, safe_train_loader = privacy_engine.make_private(module=classifier, optimizer=optimizer, data_loader=train_loader,
-                                                                                   noise_multiplier=noise_multiplier, max_grad_norm=max_grad_norm)
-        logger.info(f"Using sigma={optimizer.noise_multiplier}, C={max_grad_norm}, Epochs={num_epochs}")
+            safe_classifier, safe_optimizer, safe_train_loader = privacy_engine.make_private(module=classifier, optimizer=optimizer, data_loader=train_loader,
+                                                                          noise_multiplier=noise_multiplier, max_grad_norm=max_grad_norm)
+
+        modifygradsamplemodule(safe_classifier, backdoor_registrar=backdoor_registrar)
+
+        logger.info(f"Using sigma={safe_optimizer.noise_multiplier}, C={max_grad_norm}, Epochs={num_epochs}")
         logger.info('NOW WE HAVE FINISHED INITIALIZATION, STARTING TRAINING!!!')
-        dp_train(num_epochs, classifier, safe_train_loader, test_loader, optimizer, privacy_engine=privacy_engine, delta=delta, device=device,
+        dp_train(num_epochs, safe_classifier, safe_train_loader, test_loader, safe_optimizer, privacy_engine=privacy_engine, delta=delta, device=device,
                  max_physical_batch_size=max_physical_batch_size, logger=logger)
 
-        classifier = classifier.to('cpu')
+        safe_classifier = safe_classifier.to('cpu')
         if save_path is not None:
             wgt_save_path, rgs_save_path = path_decorator(save_path, f'_ex{j}')
+            # TODO: check id
             torch.save(classifier.save_weight(), wgt_save_path)
-            torch.save(classifier.backdoor_registrar, rgs_save_path)
+            torch.save(safe_classifier.backdoor_registrar, rgs_save_path)
 
 
 if __name__ == '__main__':

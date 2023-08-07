@@ -2,6 +2,7 @@ import torch
 import matplotlib.pyplot as plt
 import math
 from operator import itemgetter
+import opacus
 
 
 def setdiff1d(n, idx):
@@ -387,8 +388,18 @@ def indices_period_generator(num_features=768, head=64, start=0, end=6):
     return indices[is_satisfy]
 
 
-
-
+def cal_grad_norm(model):
+    assert isinstance(model, opacus.GradSampleModule), 'the input model should belongs to GradSampleModule'
+    name_lst = []
+    nm_lst = []
+    for name, param in model.named_parameters():
+        dim_indices = [j for j in range(param.dim())]
+        dim_working = tuple(dim_indices[1:])
+        nm_param = param.norm(dim=dim_working)
+        name_lst.append(name)
+        nm_lst.append(nm_param)
+    nm_tsr = torch.stack(nm_lst)
+    return nm_tsr.t(), name_lst
 
 
 if __name__ == '__main__':

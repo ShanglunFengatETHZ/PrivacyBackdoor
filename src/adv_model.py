@@ -3,15 +3,17 @@ import torch.nn as nn
 from tools import cal_set_difference_seq
 import random
 from collections import Counter
+from types import MethodType
 
 
 class EncoderMLP(nn.Module):
-    def __init__(self, encoder=None, mlp_sizes=None, input_size=(3, 32, 32), num_classes=10, dropout=None):
+    def __init__(self, encoder=None, mlp_sizes=None, input_size=(3, 32, 32), num_classes=10, dropout=None, return_intermediate=False):
         super().__init__()
         self.input_size = input_size
         self.num_classes = num_classes
 
         self.encoder = encoder
+        self.return_intermediate = return_intermediate
 
         assert len(mlp_sizes) == 2, 'the mlp should have two layers'
         self.mlp_sizes = mlp_sizes
@@ -33,7 +35,11 @@ class EncoderMLP(nn.Module):
         u = self.mlp_1stpart(features)
         v = self.mlp_2ndpart(u)
         z = self.probe(v)
-        return z
+
+        if self.return_intermediate:
+            return z, u.clone().detach(), v.clone().detach()
+        else:
+            return z
 
     def get_num_features(self, inputs=None):
         if inputs is None:
@@ -148,7 +154,7 @@ class DiffPrvBackdoorRegistrar:
         u_bkd, v_bkd = u[:, self.indices_bkd_u], v[:, self.indices_bkd_v]
         assert u_bkd.dim() == 2 and v_bkd.dim() == 2, ''
 
-        act_u_sample, act_u_bkd = torch.nonzero(u_bkd > self.eps, as_tuple=True) # a sample can only activate a door, a door can be activated by severa samples
+        act_u_sample, act_u_bkd = torch.nonzero(u_bkd > self.eps, as_tuple=True)  # a sample can only activate a door, a door can be activated by severa samples
         act_u_sample, act_u_bkd = act_u_sample.tolist(), act_u_bkd.tolist()
         act_v_sample, act_v_bkd = torch.nonzero(v_bkd > self.eps, as_tuple=True)
         act_v_sample, act_v_bkd = act_v_sample.tolist(), act_v_bkd.tolist()
@@ -212,47 +218,41 @@ class DiffPrvBackdoorRegistrar:
         return bu_bkd_array[-1] - bu_bkd_array[0]
 
 
-class DiffPrvBackdoorMLP(EncoderMLP):
-    def __init__(self, encoder=None, mlp_sizes=None, input_size=(3, 32, 32), num_classes=10, backdoor_registrar=None):
+class InitEncoderMLP(EncoderMLP):
+    def __init__(self, encoder=None, mlp_sizes=None, input_size=(3, 32, 32), num_classes=10):
         super().__init__(encoder=encoder, mlp_sizes=mlp_sizes, input_size=input_size, num_classes=num_classes, dropout=None)
-        self.backdoor_registrar = backdoor_registrar
 
     def forward(self, images):
         features = self.encoder(images)
         u = self.mlp_1stpart(features)
         v = self.mlp_2ndpart(u)
         z = self.probe(v)
-        self.backdoor_registrar.update_output_log(u, v)
+        return z, u.clone().detach(), v.clone().detach()
 
-        return z
-
-    def update_backdoor_registrar(self, backdoor_registrar):
-        self.backdoor_registrar = backdoor_registrar
-
-    def update_state(self):
-        self.backdoor_registrar.update_state(self.mlp_1stpart[0].bias)
-
-    def vanilla_initialize(self, encoder_scaling_module_idx=-1, baits=None, thresholds=None, passing_threshold=None, multipliers=None):
-        u_indices_bkd,  v_indices_bkd = self.backdoor_registrar.indices_bkd_u, self.backdoor_registrar.indices_bkd_v
+    def vanilla_initialize(self, encoder_scaling_module_idx=-1, baits=None, thresholds=None, passing_threshold=None, multipliers=None, backdoor_registrar=None):
+        # TODO: threshold all wrong for multiplier
+        u_indices_bkd,  v_indices_bkd = backdoor_registrar.indices_bkd_u, backdoor_registrar.indices_bkd_v
 
         idx_module, scaling_multiplier = encoder_scaling_module_idx, multipliers.get('encoder', 1.0),
         assert isinstance(self.encoder[idx_module], nn.Conv2d)
         self.encoder[idx_module].weight.data = scaling_multiplier * self.encoder[idx_module].weight.detach().clone()
         self.encoder[idx_module].bias.data = scaling_multiplier * self.encoder[idx_module].bias.detach().clone()
 
+        threshold_multiplier = multipliers.get('encoder', 1.0) * multipliers.get('bait', 1.0)
         self._pass_ft_build_act(self.mlp_1stpart[0], indices_bkd=u_indices_bkd, baits=baits, thresholds=thresholds,
-                                ft_passing_multiplier=multipliers.get('features_passing', 1.0), bait_multiplier=multipliers.get('bait', 1.0))
+                                ft_passing_multiplier=multipliers.get('features_passing', 1.0), bait_multiplier=multipliers.get('bait', 1.0), threshold_multiplier=threshold_multiplier)
 
         nn.init.xavier_normal_(self.mlp_2ndpart[0].weight)
         self.mlp_2ndpart[0].bias.data[:] = 0.
         self._lock_ft_pass_act(self.mlp_2ndpart[0], u_indices_bkd=u_indices_bkd, v_indices_bkd=v_indices_bkd, passing_threshold=passing_threshold,
-                               lock_multiplier=multipliers.get('features_lock', 1.0), act_passing_multiplier=multipliers.get('activation_passing', 1.0))
+                               lock_multiplier=multipliers.get('features_lock', 1.0), act_passing_multiplier=multipliers.get('activation_passing', 1.0), threshold_multiplier=threshold_multiplier)
 
         classes_connect = []
-        for j in range(self.backdoor_registrar.num_bkd):
-            complement_set = cal_set_difference_seq(self.num_classes, self.backdoor_registrar.target_labels[j])
+        for j in range(backdoor_registrar.num_bkd):
+            complement_set = cal_set_difference_seq(self.num_classes, backdoor_registrar.target_labels[j])
             complement_set = complement_set.tolist()
             classes_connect.append(random.choice(complement_set))
+
         nn.init.xavier_normal_(self.probe.weight)
         self.probe.bias.data[:] = 0.
         self._act_connect(self.probe, indices_bkd=v_indices_bkd, wrong_classes=classes_connect, act_connect_multiplier=multipliers.get('act_connect', 1.0))
@@ -261,7 +261,7 @@ class DiffPrvBackdoorMLP(EncoderMLP):
         self.activate_gradient_or_not('mlp', is_activate=True)
 
     def _pass_ft_build_act(self, module, indices_bkd, baits, thresholds,
-                           ft_passing_multiplier=1.0, bait_multiplier=1.0):
+                           ft_passing_multiplier=1.0, bait_multiplier=1.0, threshold_multiplier=1.0):
         assert isinstance(module, nn.Linear), 'the module should be linear'
         assert len(indices_bkd) == len(baits) and len(baits) == len(thresholds), 'backdoor, bait, threshold should be one-to-one correspondence'
 
@@ -274,20 +274,20 @@ class DiffPrvBackdoorMLP(EncoderMLP):
 
         for j, idx in enumerate(indices_bkd):
             module.weight.data[idx, :] = bait_multiplier * baits[j]
-            module.bias.data[idx] = - bait_multiplier * thresholds[j]
+            module.bias.data[idx] = - threshold_multiplier * thresholds[j]
 
     def _lock_ft_pass_act(self, module, u_indices_bkd, v_indices_bkd, passing_threshold,
-                          lock_multiplier=1.0, act_passing_multiplier=1.0):
+                          lock_multiplier=1.0, act_passing_multiplier=1.0, threshold_multiplier=1.0):
         assert isinstance(module, nn.Linear), 'the module should be linear'
         assert len(v_indices_bkd) == len(u_indices_bkd) and len(u_indices_bkd) == len(passing_threshold), 'the number of input backdoors should be the same as the output and threshold'
 
         indices_ft_v = cal_set_difference_seq(module.out_features, indices=v_indices_bkd)
         for idx in indices_ft_v:
-            module.weight.data[idx, u_indices_bkd] = lock_multiplier
+            module.weight.data[idx, u_indices_bkd] = - lock_multiplier
 
         module.weight.data[v_indices_bkd] = 0.0
         module.weight.data[v_indices_bkd, u_indices_bkd] = act_passing_multiplier
-        module.bias.data[v_indices_bkd] = - passing_threshold * act_passing_multiplier  # passing threshold should be large enough to keep u* v* activation at the same time during training
+        module.bias.data[v_indices_bkd] = - passing_threshold * act_passing_multiplier * threshold_multiplier # passing threshold should be large enough to keep u* v* activation at the same time during training
 
     def _act_connect(self, module, indices_bkd, wrong_classes, act_connect_multiplier=1.0):
         assert isinstance(module, nn.Linear), 'the module should be linear'
@@ -296,3 +296,24 @@ class DiffPrvBackdoorMLP(EncoderMLP):
             module.weight.data[:, idx] = 0.0
             module.bias.data[:] = 0.0
             module.weight.data[wrong_classes[j], idx] = act_connect_multiplier
+
+
+def selectiveforward(self,  *args, **kwargs):
+    z, u, v = self._module(*args, **kwargs)
+    self.backdoor_registrar.update_output_log(u, v)
+    return z
+
+
+def update_state(self):
+    self.backdoor_registrar.update_state(self.state_dict()['_module.mlp_1stpart.0.bias'])
+
+
+def modifygradsamplemodule(safe_model, backdoor_registrar):
+    safe_model.backdoor_registrar = backdoor_registrar
+    safe_model.forward = MethodType(selectiveforward, safe_model)
+    safe_model.update_state = MethodType(update_state, safe_model)
+
+
+
+
+
