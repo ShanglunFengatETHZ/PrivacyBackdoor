@@ -105,7 +105,7 @@ def train_model(model, dataloaders, optimizer, num_epochs, device='cpu', verbose
 
 
 def dp_train_by_epoch(model, train_loader, optimizer, privacy_engine, epoch, delta=1e-5,
-                      device='cpu', max_physical_batch_size=128, logger=None):
+                      device='cpu', max_physical_batch_size=128, logger=None, use_inner_output=True):
     # TODO: keep parameter epoch unchanged?
     # TODO: can this train function use for other DP-parameter combination
     model.train()
@@ -113,6 +113,7 @@ def dp_train_by_epoch(model, train_loader, optimizer, privacy_engine, epoch, del
 
     losses = []
     is_correct_lst = []
+    is_update_state = False
 
     with BatchMemoryManager(
             data_loader=train_loader,
@@ -121,13 +122,17 @@ def dp_train_by_epoch(model, train_loader, optimizer, privacy_engine, epoch, del
     ) as memory_safe_data_loader:
 
         for i, (images, target) in enumerate(memory_safe_data_loader):
-            model.update_state()
             optimizer.zero_grad()
             images = images.to(device)
             target = target.to(device)
 
             # compute output
-            output = model(images)
+            if use_inner_output:
+                output, inner_output = model(images)
+                model.backdoor_registrar.collect_inner_state(inner_output)
+            else:
+                output = model(images)
+
             loss = criterion(output, target)
 
             _, preds = torch.max(output, 1)
@@ -137,8 +142,16 @@ def dp_train_by_epoch(model, train_loader, optimizer, privacy_engine, epoch, del
             losses.append(loss.item())
             is_correct_lst.append(is_correct)
 
-            loss.backward()
+            loss.backward()  # use _check_skip_next_step to know updates
+
+            if not optimizer._check_skip_next_step(pop_next=False):
+                is_update_state = True
             optimizer.step()
+
+            if is_update_state:
+                model.update_state()
+                model.backdoor_registrar.update_log_logical()
+                is_update_state = False
 
         epsilon = privacy_engine.get_epsilon(delta)
 
@@ -150,7 +163,7 @@ def dp_train_by_epoch(model, train_loader, optimizer, privacy_engine, epoch, del
         logger.info(f"Epoch {epoch} Loss: {avg_loss:.4f} Acc@1: {acc:.4f} (ε = {epsilon:.3f}, δ = {delta})")
 
 
-def evaluation(model, test_loader, device):
+def evaluation(model, test_loader, device, use_inner_output=True):
     model.eval()
     is_correct_lst = []
 
@@ -159,7 +172,11 @@ def evaluation(model, test_loader, device):
             images = images.to(device)
             labels = labels.to(device)
 
-            outputs = model(images)
+            if use_inner_output:
+                outputs, _ = model(images)
+            else:
+                outputs = model(images)
+
             _, preds = torch.max(outputs, 1)
 
             is_correct = (preds == labels)

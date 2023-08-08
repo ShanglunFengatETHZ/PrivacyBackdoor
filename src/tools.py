@@ -393,11 +393,12 @@ def cal_grad_norm(model):
     name_lst = []
     nm_lst = []
     for name, param in model.named_parameters():
-        dim_indices = [j for j in range(param.dim())]
-        dim_working = tuple(dim_indices[1:])
-        nm_param = param.norm(dim=dim_working)
-        name_lst.append(name)
-        nm_lst.append(nm_param)
+        if param.requires_grad:
+            dim_indices = [j + 1 for j in range(param.dim())]
+            dim_working = tuple(dim_indices)
+            nm_param = param.grad_sample.norm(dim=dim_working, p=2)
+            name_lst.append(name)
+            nm_lst.append(nm_param)
     nm_tsr = torch.stack(nm_lst)
     return nm_tsr.t(), name_lst
 

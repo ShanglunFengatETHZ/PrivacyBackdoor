@@ -86,6 +86,8 @@ class EncoderMLP(nn.Module):
 
 
 def record_step_info(act_sample, act_bkd_idx, bkd_counter, values_bkd, eps=1e-5):
+    act_sample = torch.tensor(act_sample)
+    act_bkd_idx = torch.tensor(act_bkd_idx)
     if len(act_bkd_idx) > 0:
         bkd_keys = list(bkd_counter.keys())
         info_step = {'bkd_idx': bkd_keys, 'counter': [bkd_counter[key] for key in bkd_keys], 'bkd_value': []}
@@ -133,6 +135,8 @@ class DiffPrvBackdoorRegistrar:
 
         self.u_act_log = []
         self.v_act_log = []
+        self.inner_outputs_cache = []
+        self.v_cache = []
         self.bu_bkd_log = []
 
         self.epoch = -1
@@ -152,7 +156,7 @@ class DiffPrvBackdoorRegistrar:
         # u, v: num_samples * num_features
         assert u.shape[1] == self.m_u and v.shape[1] == self.m_v, 'the number of features does not match'
         u_bkd, v_bkd = u[:, self.indices_bkd_u], v[:, self.indices_bkd_v]
-        assert u_bkd.dim() == 2 and v_bkd.dim() == 2, ''
+        assert u_bkd.dim() == 2 and v_bkd.dim() == 2, 'the u,v should have 2 dimension'
 
         act_u_sample, act_u_bkd = torch.nonzero(u_bkd > self.eps, as_tuple=True)  # a sample can only activate a door, a door can be activated by severa samples
         act_u_sample, act_u_bkd = act_u_sample.tolist(), act_u_bkd.tolist()
@@ -165,11 +169,26 @@ class DiffPrvBackdoorRegistrar:
 
         info_step_u = record_step_info(act_sample=act_u_sample, act_bkd_idx=act_u_bkd, bkd_counter=u_bkd_counter,
                                        values_bkd=u_bkd, eps=self.eps)
+        # value = values_bkd[act_sample[activate_this_key], key].squeeze().item()
         self.u_act_log[self.epoch].append(info_step_u)
 
         info_step_v = record_step_info(act_sample=act_v_sample, act_bkd_idx=act_v_bkd, bkd_counter=v_bkd_counter,
                                        values_bkd=v_bkd, eps=self.eps)
         self.v_act_log[self.epoch].append(info_step_v)
+
+    def collect_inner_state(self, inner_output):
+        self.inner_outputs_cache.append(inner_output)
+
+    def update_log_logical(self):
+        u_lst, v_lst = [], []
+        for inner_output in self.inner_outputs_cache:
+            u, v = inner_output
+            u_lst.append(u)
+            v_lst.append(v)
+        u = torch.cat(u_lst)
+        v = torch.cat(v_lst)
+        self.inner_outputs_cache = []
+        self.update_output_log(u, v)
 
     def update_state(self, bu):
         bu = bu.detach().clone()
@@ -181,12 +200,13 @@ class DiffPrvBackdoorRegistrar:
             lst_this_epoch = []
             for log_this_step in log_this_epoch:
                 signal_this_step = torch.zeros(self.num_bkd)
-                signal_this_step[log_this_step['bkd_idx']] = log_this_step['counter'] if is_activation_counter else log_this_step['bkd_value']
+                if len(log_this_step.keys()) > 0:
+                    signal_this_step[log_this_step['bkd_idx']] = torch.tensor(log_this_step['counter']).float() if is_activation_counter else torch.tensor(log_this_step['bkd_value'])
                 lst_this_epoch.append(signal_this_step)
             array_this_epoch = torch.stack(lst_this_epoch)
             lst.append(array_this_epoch)
         if is_stitch_overall:
-            return torch.stack(lst)
+            return torch.cat(lst)
         else:
             return lst
 
@@ -199,14 +219,21 @@ class DiffPrvBackdoorRegistrar:
             array_this_epoch = torch.stack(lst_this_epoch)
             lst.append(array_this_epoch)
         if is_stitch_overall:
-            return torch.stack(lst)
+            return torch.cat(lst)
         else:
             return lst
 
-    def get_change_by_activation(self, activation_count=None):
-        activation_array = self._uvlog2array(self.u_act_log, is_stitch_overall=True, is_activation_counter=True)
-        bu_bkd_array = self._bulog2array(self.bu_bkd_log, is_stitch_overall=True)
-        assert len(bu_bkd_array) - len(activation_array) == 1, 'should have n+1 states and n passes'
+    def get_change_by_activation(self, activation_count=None, ignore_last=False):
+        if ignore_last:
+            u_act_log = self.u_act_log[:-1]
+            bu_bkd_log = self.bu_bkd_log[:-1]
+        else:
+            u_act_log = self.u_act_log
+            bu_bkd_log = self.bu_bkd_log
+
+        activation_array = self._uvlog2array(u_act_log, is_stitch_overall=True, is_activation_counter=True)
+        bu_bkd_array = self._bulog2array(bu_bkd_log, is_stitch_overall=True)
+        assert len(bu_bkd_array) - len(activation_array) == 1, f'should have n+1 states and n passes: {len(bu_bkd_array)},{len(activation_array)}'
 
         is_select = (activation_array == activation_count)
         delta_bu_bkd = bu_bkd_array[1:] - bu_bkd_array[:-1]
@@ -227,7 +254,7 @@ class InitEncoderMLP(EncoderMLP):
         u = self.mlp_1stpart(features)
         v = self.mlp_2ndpart(u)
         z = self.probe(v)
-        return z, u.clone().detach(), v.clone().detach()
+        return z, (u.clone().detach(), v.clone().detach())
 
     def vanilla_initialize(self, encoder_scaling_module_idx=-1, baits=None, thresholds=None, passing_threshold=None, multipliers=None, backdoor_registrar=None):
         # TODO: threshold all wrong for multiplier
@@ -298,19 +325,12 @@ class InitEncoderMLP(EncoderMLP):
             module.weight.data[wrong_classes[j], idx] = act_connect_multiplier
 
 
-def selectiveforward(self,  *args, **kwargs):
-    z, u, v = self._module(*args, **kwargs)
-    self.backdoor_registrar.update_output_log(u, v)
-    return z
-
-
 def update_state(self):
     self.backdoor_registrar.update_state(self.state_dict()['_module.mlp_1stpart.0.bias'])
 
 
 def modifygradsamplemodule(safe_model, backdoor_registrar):
     safe_model.backdoor_registrar = backdoor_registrar
-    safe_model.forward = MethodType(selectiveforward, safe_model)
     safe_model.update_state = MethodType(update_state, safe_model)
 
 

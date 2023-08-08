@@ -31,7 +31,7 @@ def find_self_consist(features, centralize_multiplier, target_img_indices):
     baits_candidate = features[target_img_indices]
     baits_candidate = baits_candidate - centralize_multiplier * baits_candidate.mean(dim=1, keepdim=True)
     baits_candidate = baits_candidate / baits_candidate.norm(dim=1, keepdim=True)
-    scores = features @ baits_candidate.t() # num_samples, num_baits
+    scores = features @ baits_candidate.t()  # num_samples, num_baits
 
     scores_targeted = scores[target_img_indices, torch.arange(len(target_img_indices))]
     scores_top2, image_indices = scores.topk(2, dim=0)  # topk * num_baits
@@ -118,10 +118,12 @@ def check_largest(num_targets, encoder, baits, upperlowerbounds, dataset):
 
 
 def set_threshold(upperlowerbounds, threshold_quantile=0.9, passing_threshold_quantile=0.1):
-    assert threshold_quantile > passing_threshold_quantile, 'meaningless threshold quantiles may exist'
+    assert 1.0 > threshold_quantile > 0.0, 'meaningless threshold quantiles may exist'
+    assert 1.0 > passing_threshold_quantile > 0.0, 'meaningless passing threshold quantiles may exist'
     upper_bound, lower_bound = upperlowerbounds[0], upperlowerbounds[1]
     threshold = threshold_quantile * upper_bound + (1 - threshold_quantile) * lower_bound
-    passing_threshold = passing_threshold_quantile * upper_bound + (1 - passing_threshold_quantile) * lower_bound
+
+    passing_threshold = (upper_bound - threshold) * passing_threshold_quantile
     return threshold, passing_threshold
 
 
@@ -177,9 +179,11 @@ def build_public_model(info_dataset, info_model, info_train, logger, save_path=N
 def dp_train(num_epochs, classifier, train_loader, test_loader, optimizer, privacy_engine, delta=1e-5, device='cpu', max_physical_batch_size=64, logger=None):
     for epoch in range(num_epochs):
         classifier.backdoor_registrar.update_epoch(epoch)
+        if epoch == 0:
+            classifier.update_state()
         dp_train_by_epoch(classifier, train_loader, optimizer, privacy_engine, epoch=epoch, delta=delta, device=device,
                           max_physical_batch_size=max_physical_batch_size, logger=logger)
-    classifier.update_state()
+
     test_acc = evaluation(classifier, test_loader, device=device)
     logger.info(f"\tTest set Acc: {test_acc:.4f}")
 
