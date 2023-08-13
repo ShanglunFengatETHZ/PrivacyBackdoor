@@ -5,6 +5,7 @@ from opacus.utils.batch_memory_manager import BatchMemoryManager
 
 
 def get_optimizer(model, lr=0.1, heads_factor=None, only_linear_probe=False):
+    # TODO: abandon this function, to work in transformer, output parameters in different part for wrapper.
     if heads_factor is None:
         params = model.parameters()
         return SGD(params=params, lr=lr)
@@ -14,6 +15,12 @@ def get_optimizer(model, lr=0.1, heads_factor=None, only_linear_probe=False):
         if only_linear_probe:
             return SGD([{'params': params_fc, 'lr': lr}])
         return SGD([{'params': params_encoder, 'lr': lr}, {'params': params_fc, 'lr': lr * heads_factor}])
+
+# TODO: use the following codes to control the random values
+# TODO: random.seed(seed_val)
+# TODO: np.random.seed(seed_val)
+# TODO: torch.manual_seed(seed_val)
+# TODO: torch.cuda.manual_seed_all(seed_val)
 
 
 def train_model(model, dataloaders, optimizer, num_epochs, device='cpu', verbose=False, direct_resize=None, logger=None):
@@ -185,3 +192,66 @@ def evaluation(model, test_loader, device, use_inner_output=True):
     is_correct_all = torch.cat(is_correct_lst)
     acc = is_correct_all.float().mean().item()
     return acc
+
+
+def text_train(model, train_dataloader, optimizer, device='cpu', logger=None):
+    total_train_loss = 0
+    model.train()
+    is_correct_lst = []
+
+    for step, batch in enumerate(train_dataloader):
+        if step % 20 == 0 and not step == 0:
+            if logger is None:
+                print('  Batch {:>5,}  of  {:>5,}'.format(step, len(train_dataloader)))
+        input_ids, input_mask, labels = batch
+        input_ids = input_ids.to(device)
+        input_mask = input_mask.to(device)
+        labels = labels.to(device)
+
+        model.zero_grad()
+        outputs = model(input_ids, token_type_ids=None, attention_mask=input_mask, labels=labels)
+        loss, logits = outputs['loss'], outputs['logits']
+
+        total_train_loss += loss.item()
+        _, preds = torch.max(logits, 1)
+        is_correct = (preds == labels)
+        is_correct_lst.append(is_correct)
+
+        loss.backward()
+        optimizer.step()
+        # Calculate the average loss over all of the batches.
+    avg_train_loss = total_train_loss / len(train_dataloader)
+    is_correct_all = torch.cat(is_correct_lst)
+    acc = torch.mean(is_correct_all.float()).item()
+    if logger is None:
+        print(f'Accuracy:{acc}, Loss:{avg_train_loss}')
+
+
+def text_evaluation(model, evaluation_dataloader, device='cpu'):
+    model.eval()
+
+    total_eval_loss = 0
+    is_correct_lst = []
+
+    for batch in evaluation_dataloader:
+        input_ids, input_mask, labels = batch
+        input_ids = input_ids.to(device)
+        input_mask = input_mask.to(device)
+        labels = labels.to(device)
+
+        with torch.no_grad():
+            outputs = model(input_ids, token_type_ids=None, attention_mask=input_mask, labels=labels)
+            loss, logits = outputs['loss'], outputs['logits']
+
+        total_eval_loss += loss.item()
+        _, preds = torch.max(logits, 1)
+        is_correct = (preds == labels)
+        is_correct_lst.append(is_correct)
+
+    avg_val_loss = total_eval_loss / len(evaluation_dataloader)
+    is_correct_all = torch.cat(is_correct_lst)
+    acc = torch.mean(is_correct_all.float()).item()
+    return acc, avg_val_loss
+
+
+

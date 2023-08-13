@@ -3,6 +3,8 @@ import torchvision.datasets as datasets
 import torch.utils.data as data
 import torchvision.transforms as transforms
 from tools import setdiff1d
+from torch.utils.data import TensorDataset, random_split
+import datasets as hgf
 
 
 def load_dataset(root, dataset, is_normalize=False, resize=None, is_augment=False):
@@ -41,7 +43,59 @@ def load_dataset(root, dataset, is_normalize=False, resize=None, is_augment=Fals
     return train_dataset, test_dataset, resolution, classes
 
 
+def get_sentences_labels_from_dicts(dataset, text_key, label_key):
+    m = len(dataset)
+    sentences_lst = []
+    labels_lst = []
+    for j in range(m):
+        info = dataset[j]
+        text, label = info[text_key], info[label_key]
+        sentences_lst.append(text)
+        labels_lst.append(label)
+    return sentences_lst, labels_lst
+
+
+def cope_with_sentences(sentences, tokenizer=None, max_len=64, pad_to_max_length=True):
+    input_ids = []
+    attention_masks = []
+
+    for sent in sentences:
+        encoded_dict = tokenizer.encode_plus(sent, add_special_tokens=True, max_length=max_len,
+                                             pad_to_max_length=pad_to_max_length, return_attention_mask=True,
+                                             return_tensors='pt')
+
+        input_ids.append(encoded_dict['input_ids'])
+        attention_masks.append(encoded_dict['attention_mask'])
+
+    # Convert the lists into tensors.
+    input_ids = torch.cat(input_ids, dim=0)
+    attention_masks = torch.cat(attention_masks, dim=0)
+    return input_ids, attention_masks
+
+
+def load_text_dataset(root=None, dataset=None, tokenizer=None, max_len=64):
+    if dataset == 'trec':
+        train_dicts, test_dicts = hgf.load_dataset('trec', split='train'), hgf.load_dataset('trec', split='test')
+        train_sentences, train_labels = get_sentences_labels_from_dicts(train_dicts, text_key='text', label_key='coarse_label')
+        test_sentences, test_labels = get_sentences_labels_from_dicts(test_dicts, text_key='text', label_key='coarse_label')
+        classes = 6
+    else:
+        train_sentences, train_labels = None, None
+        test_sentences, test_labels = None, None
+        classes = 2
+        pass
+    train_input_ids, train_attention_masks = cope_with_sentences(train_sentences, tokenizer=tokenizer, max_len=max_len)
+    train_labels = torch.tensor(train_labels)
+    test_input_ids, test_attention_masks = cope_with_sentences(test_sentences, tokenizer=tokenizer, max_len=max_len)
+    test_labels = torch.tensor(test_labels)
+
+    train_dataset = TensorDataset(train_input_ids, train_attention_masks, train_labels)
+    test_dataset = TensorDataset(test_input_ids, test_attention_masks, test_labels)
+    return train_dataset, test_dataset, classes
+
+
 def get_subdataset(ds, p=0.5, random_seed=12345678):
+    # TODO: use torch.utils.data.random_split
     if p is None:
         return ds, None
     else:
@@ -65,7 +119,7 @@ def get_dataloader(ds0, batch_size, num_workers, ds1=None):
 
     if ds1 is not None:
         ds1_loader = data.DataLoader(dataset=ds1, batch_size=batch_size, shuffle=False,
-                                     pin_memory=True, num_workers=num_workers)
+                                     pin_memory=True, num_workers=num_workers) # shuffle v.s. sampler https://discuss.pytorch.org/t/samplers-vs-shuffling/73740
         return ds0_loader, ds1_loader
     else:
         return ds0_loader

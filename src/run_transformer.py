@@ -1,8 +1,9 @@
 import torch
 from data import get_subdataset, load_dataset, get_dataloader
 from torchvision.models import vit_b_32, ViT_B_32_Weights
-from edit_transformer import TransformerRegistrar, TransformerWrapper, indices_period_generator
+from edit_transformer import TransformerRegistrar, TransformerWrapper
 from train import train_model, get_optimizer
+from tools import indices_period_generator
 import logging
 
 
