@@ -14,7 +14,7 @@ def train_bert_classifier():
     max_len = 48
     num_epochs = 5
     batch_size = 16
-    device = 'mps'
+    device = 'cpu'
     is_simplify_arch = True
 
     train_dataset, test_dataset, num_classes = load_text_dataset(dataset=dataset_name, tokenizer=tokenizer, max_len=max_len)
