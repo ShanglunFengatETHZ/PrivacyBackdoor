@@ -194,7 +194,7 @@ def evaluation(model, test_loader, device, use_inner_output=True):
     return acc
 
 
-def text_train(model, train_dataloader, optimizer, device='cpu', logger=None):
+def text_train(model, train_dataloader, optimizer, device='cpu', logger=None, is_debug=False):
     total_train_loss = 0
     model.train()
     is_correct_lst = []
@@ -211,6 +211,9 @@ def text_train(model, train_dataloader, optimizer, device='cpu', logger=None):
         model.zero_grad()
         outputs = model(input_ids, token_type_ids=None, attention_mask=input_mask, labels=labels)
         loss, logits = outputs['loss'], outputs['logits']
+        if is_debug:
+            hidden_states = outputs['hidden_states']
+            #Tuple of torch.FloatTensor (one for the output of the embeddings + one for the output of each layer) of shape
 
         total_train_loss += loss.item()
         _, preds = torch.max(logits, 1)

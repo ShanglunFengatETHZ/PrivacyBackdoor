@@ -289,7 +289,6 @@ class TransformerWrapper(nn.Module):
         self.encoderblocks = encoderblocks
         self.synthesizeblocks = synthesizeblocks
 
-
     def set_conv_encoding(self, noise, conv_encoding_scaling, extracted_pixels, default_large_constant=1e9):
         self.noise = noise
         self.conv_encoding_scaling = conv_encoding_scaling

@@ -27,8 +27,8 @@ def train_bert_classifier():
         config.hidden_dropout_prob = 0.0
         config.attention_probs_dropout_prob = 0.0
     config.num_labels = num_classes
-    config.output_attentions = False
-    config.output_hidden_states = False
+    config.output_attentions = True
+    config.output_hidden_states = True
     classifier = BertForSequenceClassification.from_pretrained(pretrained_model_name_or_path='bert-base-uncased', config=config)
     if is_simplify_arch:
         classifier.bert.pooler.activation = nn.ReLU()

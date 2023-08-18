@@ -225,6 +225,10 @@ def pass_forward(net, dataloader, return_label=False):
     else:
         return torch.cat(fts)
 
+def pass_forward_text(net, dataloader, return_label=False):
+    pass
+
+
 
 def large_add_small(u, beta):
     cal_std = lambda x: torch.sqrt(torch.mean((x-torch.mean(x))**2))
