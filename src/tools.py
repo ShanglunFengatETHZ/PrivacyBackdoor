@@ -225,9 +225,26 @@ def pass_forward(net, dataloader, return_label=False):
     else:
         return torch.cat(fts)
 
-def pass_forward_text(net, dataloader, return_label=False):
-    pass
 
+def pass_forward_text(net, dataloader, return_label=False):
+    net.eval()
+    fts = []
+    labels = []
+    for batch in dataloader:
+        input_ids, input_mask, labels = batch
+        input_ids = input_ids
+        input_mask = input_mask
+        labels = labels
+
+        with torch.no_grad():
+            ft = net(input_ids, token_type_ids=None, attention_mask=input_mask, labels=labels)
+            fts.append(ft)
+            labels.append(labels)
+
+    if return_label:
+        return torch.cat(fts), torch.cat(labels)
+    else:
+        return torch.cat(fts)
 
 
 def large_add_small(u, beta):
