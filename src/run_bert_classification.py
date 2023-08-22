@@ -1,6 +1,6 @@
 import torch.nn as nn
 from transformers import BertForSequenceClassification, BertTokenizer, AutoConfig
-from edit_bert_classification import bert_backdoor_initialization
+from edit_bert_classification import bert_backdoor_initialization, bert_semi_active_initialization
 from data import get_dataloader, load_text_dataset
 from torch.optim import SGD
 from train import text_train, text_evaluation
@@ -10,14 +10,15 @@ import torch
 def train_bert_classifier():
     tokenizer = BertTokenizer.from_pretrained('bert-base-uncased', do_lower_case=True)
 
-    use_backdoor_initialization = True
+    use_backdoor_initialization = False
+    use_semiactivated_initialization = True
     learning_rate = 1e-4
     learning_rate_probe = 0.3
     dataset_name = 'trec'
     max_len = 48
     num_epochs = 5
     batch_size = 16
-    device = 'cpu'
+    device = 'mps'
     is_simplify_arch = True
     save_path = './weights/bert_v1'
 
@@ -54,6 +55,16 @@ def train_bert_classifier():
         args['last_activation_multiplier'] = 100.0
         args['features_add'] += 10.0
         bert_monitor = bert_backdoor_initialization(classifier, train_dataloader, args)
+        print('use backdoor initialization')
+
+    if use_semiactivated_initialization and not use_backdoor_initialization:
+        args = {}
+        args['embedding_multiplier'] = 20.0
+        args['embedding_large_constant'] = 1000.0
+        args['block0_large_constant'] = 1000.0
+        args['block1_large_constant'] = 1000.0
+        bert_semi_active_initialization(classifier, args)
+        print('use semi-active initialization')
 
     optimizer = SGD([{'params': classifier.bert.parameters(), 'lr': learning_rate}, {'params': classifier.classifier.parameters(), 'lr': learning_rate_probe}])
 
