@@ -169,7 +169,7 @@ def edit_backdoor_mlp(module, indices_bkd_sequences,
 
 
 def edit_limiter(module, act_indices=None, threshold=0.0, large_constant=0.0, large_constant_indices=None,
-                 last_ln_weight=None, last_ln_bias=None, act_ln_multiplier=0.0, open_limit=True):
+                 last_ln_weight=None, last_ln_bias=None, act_ln_op_multiplier=0.0, open_limit=True):
     # this is used for controling the upper bound of activation signal
 
     n = module.intermediate.dense.in_features
@@ -194,8 +194,7 @@ def edit_limiter(module, act_indices=None, threshold=0.0, large_constant=0.0, la
     module.output.LayerNorm.weight.data[:] = last_ln_weight
     module.output.LayerNorm.bias.data[:] = last_ln_bias
 
-
-    module.output.LayerNorm.weight.data[act_indices] = act_ln_multiplier
+    module.output.LayerNorm.weight.data[act_indices] = act_ln_op_multiplier
     module.output.LayerNorm.bias.data[act_indices] = 0.0
 
 
@@ -531,7 +530,6 @@ def bert_backdoor_initialization(classifier, dataloader, args):
     amplifier_noise_thres_layers = [0.2, 0.2, 0.2, 0.2, 0.2, 0.2,
                                    0.2, 0.2, 0.2, 0.2, 0.2, 0.2]
 
-
     edit_embedding(classifier.bert.embeddings, ft_indices=indices_ft, blank_indices=indices_occupied, multiplier=args['embedding_multiplier'],
                    position_clean_multiplier=args['position_clean_multiplier'], position_clean_indices=indices_ps,
                    large_constant_indices=indices_occupied, large_constant=args['embedding_large_constant'],
@@ -551,14 +549,16 @@ def bert_backdoor_initialization(classifier, dataloader, args):
     # seq_bait, possible_classes, seq_quantity = seq_signal_passing(inputs=(features[:, 0], labels), num_output=num_backdoors, topk=args['topk'], input_mirror_symmetry=True, signal_indices=indices_signal, multiplier=args['seq_signal_mutliplier'], approach='native')
     seq_bait, possible_classes, seq_quantity, willing_fishes = gaussian_seq_bait_generator(inputs=(features[:, 0], labels), num_output=100 * num_backdoors,
                                                                            topk=args['topk'], input_mirror_symmetry=True,
-                                                                           signal_indices=indices_signal, multiplier=args['seq_signal_mutliplier'])
+                                                                           signal_indices=indices_signal, multiplier=args['gaussian_bait_multiplier'])
     seq_bait, possible_classes, seq_quantity, willing_fishes = select_bait(weights=seq_bait, possible_classes=possible_classes,
                                                                            quantities=seq_quantity, willing_fishes=willing_fishes,
-                                                                           gap_larger_than=args['gap_larger_than'], num_output=num_backdoors)
+                                                                           gap_larger_than=args['gap_larger_than'], num_output=num_backdoors,
+                                                                           no_intersection=True, max_multiple=args['max_multiple'])
     seq_threshold = get_backdoor_threshold(seq_quantity[:2], neighbor_balance=(0.2, 0.8))
     print(f'signal threshold lower bound:{seq_quantity[0]}')
     print(f'signal threshold upper bound:{seq_quantity[1]}')
     print(f'largest signal:{seq_quantity[2]}')
+    print(f'signal max gap: {seq_quantity[2] - seq_quantity[0]}')
     print(f'signal proportion: {(seq_quantity[2] - seq_quantity[1])/(seq_quantity[1] - seq_quantity[0])}')
 
     edit_backdoor_mlp(classifier.bert.encoder.layer[0], indices_bkd_sequences=indices_bkd_sequences,
@@ -569,7 +569,7 @@ def bert_backdoor_initialization(classifier, dataloader, args):
 
     edit_limiter(classifier.bert.encoder.layer[1], act_indices=indices_bkd, threshold=args['activation_signal_bound'],
                  large_constant=args['limiter_large_constant'], large_constant_indices=indices_occupied,
-                 last_ln_weight=embedding_ln_weight, last_ln_bias=embedding_ln_bias, act_ln_multiplier=torch.median(embedding_ln_weight))
+                 last_ln_weight=embedding_ln_weight, last_ln_bias=embedding_ln_bias, act_ln_op_multiplier=torch.median(embedding_ln_weight), open_limit=False)
 
     for j in range(2, 11):
         act_ln_attention = act_ln_attention_layers[j]
@@ -583,11 +583,11 @@ def bert_backdoor_initialization(classifier, dataloader, args):
     edit_probe(classifier.classifier, act_indices=indices_bkd, wrong_classes=wrong_classes,
                activation_multiplier=args['last_activation_multiplier'])
     print('FINISH INITIALIZATION')
-    return BertMonitor(classifier.bert.embeddings, classifier.bert.encoder.layer[0], indices_bkd_sequences)
+    return BertMonitor(classifier.bert.embeddings, classifier.bert.encoder.layer[0], indices_bkd_sequences, indices_ps)
 
 
 class BertMonitor:
-    def __init__(self, initial_embedding, initial_backdoor, backdoor_indices, other_blks=None):
+    def __init__(self, initial_embedding, initial_backdoor, backdoor_indices, clean_position_indices, other_blks=None):
         # backdoor indices should be two dimension: different sequence * entry in a sequence
         self.initial_embedding_weights = copy.deepcopy(initial_embedding.state_dict())
         self.initial_backdoor_weights = copy.deepcopy(initial_backdoor.state_dict())
@@ -599,6 +599,7 @@ class BertMonitor:
         if isinstance(backdoor_indices, torch.Tensor):
             assert backdoor_indices.dim() == 2
         self.backdoor_indices = backdoor_indices
+        self.clean_position_indices = clean_position_indices
 
         self.embedding_submodules = ['word_embeddings', 'position_embeddings', 'token_type_embeddings', 'LayerNorm']
         self.encoderblock_submodules = ['attention.self.query', 'attention.self.key', 'attention.self.value', 'attention.output.dense',
@@ -628,32 +629,62 @@ class BertMonitor:
         delta_weights = self.current_backdoor_weights['intermediate.dense.weight'] - self.initial_backdoor_weights['intermediate.dense.weight']
         delta_bias = self.current_backdoor_weights['intermediate.dense.bias'] - self.initial_backdoor_weights['intermediate.dense.bias']
 
-        update_signal = delta_weights.detach().clone() / delta_bias.detach().clone().unsqueeze(dim=-1)
-        update_signal_this_sequence = update_signal[indices_bkd_this_sequence]
+        update_signal = delta_weights.detach().clone() / (delta_bias.detach().clone().unsqueeze(dim=-1)+1e-12)
+        update_signal_this_sequence = update_signal[indices_bkd_this_sequence] #
 
         updates = []
+        if not isinstance(target_entries, list):
+            target_entries = [target_entries]
+
         for target_entry in target_entries:
             update_this_entry = update_signal_this_sequence[:, target_entry]
             updates.append(update_this_entry)
         return updates
 
-    def get_digital_code(self, sequence, dictionary, eps=1e-2):
+    def get_dictionary(self, indices_features, idx_position=1, idx_token_type=0, centralize=True):
+        word_embedding, _ = self._extract_information(block='embedding', submodule='word_embeddings')
+        position_embedding, _ = self._extract_information(block='embedding', submodule='position_embeddings')
+        token_embedding, _ = self._extract_information(block='embedding', submodule='token_type_embeddings')
+
+        dictionary = position_embedding[idx_position, indices_features].unsqueeze(dim=0) + token_embedding[idx_token_type, indices_features].unsqueeze(dim=0) + word_embedding[:, indices_features]
+        if centralize:
+            dictionary = dictionary - dictionary.mean(dim=1,keepdim=True)
+        dictionary = dictionary / dictionary.norm(dim=1, keepdim=True)
+        return dictionary
+
+    def get_text_digital_code_this_sequence(self, features_this_seq, indices_position, indices_features, centralize=True, output_zero=True):
+        # features_this_seq: a backdoor different position * num_features
+        assert len(features_this_seq) == len(indices_position), 'the features sequences and position indices do NOT match'
+        largest_lst = []
+        second_lst = []
+        word_code_lst = []
+        for j in range(len(features_this_seq)):
+            posi_this_word = indices_position[j]
+            features_this_word = features_this_seq[j]
+            if output_zero or posi_this_word > 0:
+                dictionary = self.get_dictionary(indices_features, idx_position=posi_this_word, idx_token_type=0, centralize=True)
+                if centralize:
+                    features_this_word = features_this_word - features_this_word.mean()
+                features_this_word = features_this_word / features_this_word.norm(dim=-1, keepdim=True)
+                similarity = torch.abs(dictionary @ features_this_word)
+                values, indices= similarity.topk(2)
+                largest_lst.append(values[0].item())
+                second_lst.append(values[1].item())
+                word_code_lst.append(indices[0].item())
+        return word_code_lst, largest_lst, second_lst
+
+    def get_digital_code(self, sequence, dictionary):
         # sequence: length_sequence * num_entry, dictionary: num_digital * num_entry
-        sequence_normalized = sequence / sequence.norm(dim=1, keepdim=True)
-        dictionary_normalized = dictionary / dictionary.norm(dim=1, keepdim=True)
+        sequence_normalized = sequence / (sequence.norm(dim=1, keepdim=True)+1e-12)
+        dictionary_normalized = dictionary / (dictionary.norm(dim=1, keepdim=True)+1e-12)
 
         similarity = torch.abs(sequence_normalized @ dictionary_normalized.t()) # length_sequence * num_entry
-        values, indices = similarity.topk(1, dim=1)
-        values, indices = values.squeeze(), indices.squeeze()
+        values, indices = similarity.topk(2, dim=1)
 
-        assert torch.all(values > 1 - eps), 'cannot make sure about the number'
-        return indices
+        return indices[:,0], values[:,0], values[:,1]
 
-    def get_text(self, tokenizer, sequences):
-        sequences_lst = []
-        for seq in sequences:
-            sequences_lst.append(tokenizer.decode(seq, skip_special_tokens=True))
-        return sequences_lst
+    def get_text(self, tokenizer, sequence):
+        return tokenizer.decode(sequence, skip_special_tokens=True)
 
     def get_backdoor_bias_change(self):
         init_bkd_bias,  curr_bkd_bias = self._extract_information(block='encoderblock', submodule='intermediate.dense', suffix='bias')
@@ -664,7 +695,7 @@ class BertMonitor:
             delta_bkd_bias_this_seq = delta_bkd_bias[this_bkd_seq_indices].tolist()
             delta_bkd_bias_this_seq = ['{:.2e}'.format(delta_bkd_bias_this_token) for delta_bkd_bias_this_token in delta_bkd_bias_this_seq]
             delta_bkd_bias_printable.append(delta_bkd_bias_this_seq)
-        return delta_bkd_bias_printable
+        return delta_bkd_bias_printable, delta_bkd_bias
 
     def get_position_embedding_change(self, indices_entry, submodule='position_embeddings', suffix='weight', max_len=36):
         assert submodule in self.embedding_submodules
@@ -682,7 +713,6 @@ class BertMonitor:
 if __name__ == '__main__':
     # TODO: verify the correctness by observing forward results
     # TODO: decide the range the parameters
-    # TODO: filter + enlarge information
 
     # WHY the will become larger?
     tokenizer = BertTokenizer.from_pretrained('bert-base-uncased', do_lower_case=True)
@@ -708,33 +738,32 @@ if __name__ == '__main__':
     args['position_clean_multiplier'] = 20.0
     args['embedding_large_constant'] = 5e3
     args['feature_syn_large_constant'] = 5e3
-    args['gap_larger_than'] = 0.2
+    args['gap_larger_than'] = 0.4
     args['signal_multiplier'] = 1.0
-    args['bait_posi_multiplier'] = 1.0
-    args['seq_signal_mutliplier'] = 1.0
-    args['backdoor_mlp_large_constant'] = 3e3
-    args['backdoor_multiplier'] = 1.0
-    args['activation_signal_bound'] = 3.0
-    args['limiter_large_constant'] = 3e3
-    args['noise_threshold'] = 0.5
+    args['max_multiple'] = 1.5
+    args['bait_posi_multiplier'] = 0.25
+    args['gaussian_bait_multiplier'] = 1.0
+    args['backdoor_mlp_large_constant'] = 5e3
+    args['backdoor_multiplier'] = 25.0
+    args['activation_signal_bound'] = 50.0
+    args['limiter_large_constant'] = 5e3
+    args['noise_threshold'] = 0.8
     args['last_activation_multiplier'] = 100
-    args['features_add'] = 3.0
-    args['topk'] = 5
-
+    args['features_add'] = 5.0
+    args['topk'] = 3
     bert_backdoor_initialization(classifier, dataloader=train_dataloader, args=args)
     native_attention_it = NativeOneAttentionEncoder(bertmodel=classifier.bert, use_intermediate=True, before_intermediate=True)
     native_attention_at = NativeOneAttentionEncoder(bertmodel=classifier.bert, use_intermediate=False)
 
-    """
+    # this is used for debugging easily.
     indices_ft = indices_period_generator(num_features=768, head=64, start=0, end=8)
     indices_occupied = cal_set_difference_seq(768, indices_ft)
     indices_ps = indices_period_generator(num_features=768, head=64, start=8, end=9)
     indices_signal = indices_period_generator(num_features=768, head=64, start=9, end=11)
-    indices_bkd = indices_period_generator(num_features=768, head=64, start=11, end=12)[:num_backdoors]
+    indices_bkd = indices_period_generator(num_features=768, head=64, start=11, end=12)[:32]
     indices_bkd_sequences = []
-    for j in range(num_backdoors):
-        indices_bkd_sequences.append(torch.arange(max_len * j, max_len * (j+1)))
-    """
+    for j in range(32):
+        indices_bkd_sequences.append(torch.arange(max_len * j, max_len * (j + 1)))
 
     with torch.no_grad():
         for step, batch in enumerate(train_dataloader):
@@ -743,8 +772,10 @@ if __name__ == '__main__':
             activation_signal = native_attention_it(input_ids, token_type_ids=None, attention_mask=input_mask)
             outputs = classifier(input_ids, token_type_ids=None, attention_mask=input_mask, labels=labels)
             hidden_states = outputs['hidden_states']
+            print(f'embedding: {hidden_states[0][:, 1, indices_ft].std()}, {hidden_states[0][:, 2, indices_ft].std()}')
             for j in range(12):
-                print(f'{hidden_states[j][0, 1, torch.arange(11, 700, 12)[:32]].max()}, {hidden_states[j][0, 1, torch.arange(11, 700, 12)[:32]].min()}, {hidden_states[j][0, 1].std()}, {hidden_states[j][0, 1, torch.arange(11, 700, 12)[:32]].max()/ hidden_states[j][0, 1].std()}')
+                print(f'after layer: {j}')
+                print(f'{hidden_states[j+1][0, 1, torch.arange(11, 700, 12)[:32]].max()}, {hidden_states[j+1][0, 1, torch.arange(11, 700, 12)[:32]].min()}, {hidden_states[j+1][0, 1].std()}, {hidden_states[j+1][0, 1, torch.arange(11, 700, 12)[:32]].max()/ hidden_states[j+1][0, 1].std()}')
                 print(f'layernormal:{classifier.bert.encoder.layer[j].attention.output.LayerNorm.weight[11]}, {classifier.bert.encoder.layer[j].attention.output.LayerNorm.bias[11]}, {classifier.bert.encoder.layer[j].output.LayerNorm.weight[11]}, {classifier.bert.encoder.layer[j].output.LayerNorm.bias[11]}')
                 print(f'\n')
             print('after test')

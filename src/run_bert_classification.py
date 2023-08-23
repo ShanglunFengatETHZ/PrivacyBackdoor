@@ -10,15 +10,15 @@ import torch
 def train_bert_classifier():
     tokenizer = BertTokenizer.from_pretrained('bert-base-uncased', do_lower_case=True)
 
-    use_backdoor_initialization = False
-    use_semiactivated_initialization = True
-    learning_rate = 1e-4
+    use_backdoor_initialization = True
+    use_semiactivated_initialization = False
+    learning_rate = 1e-6
     learning_rate_probe = 0.3
     dataset_name = 'trec'
     max_len = 48
-    num_epochs = 5
-    batch_size = 16
-    device = 'mps'
+    num_epochs = 2
+    batch_size = 32
+    device = 'cpu'
     is_simplify_arch = True
     save_path = './weights/bert_v1'
 
@@ -41,19 +41,23 @@ def train_bert_classifier():
     bert_monitor = None
     if use_backdoor_initialization:
         args = {}
-        args['embedding_multipliers'] = {'features':1.0, 'position':1.0, 'word':1.0}
-        args['embedding_large_constant'] = 1e5
-        args['feature_syn_large_constant'] = 1e5
+        args['embedding_multiplier'] = 100.0
+        args['position_clean_multiplier'] = 20.0
+        args['embedding_large_constant'] = 5e3
+        args['feature_syn_large_constant'] = 5e3
+        args['gap_larger_than'] = 0.4
         args['signal_multiplier'] = 1.0
-        args['bait_posi_multiplier'] = 0.1
-        args['seq_signal_mutliplier'] = 1.0
-        args['backdoor_mlp_large_constant'] = 1e5
-        args['backdoor_multiplier'] = 1.0
-        args['activation_signal_bound'] = 5.0
-        args['limiter_large_constant'] = 1e5
-        args['noise_threshold'] = 0.5
-        args['last_activation_multiplier'] = 100.0
-        args['features_add'] += 10.0
+        args['max_multiple'] = 1.5
+        args['bait_posi_multiplier'] = 0.25
+        args['gaussian_bait_multiplier'] = 1.0
+        args['backdoor_mlp_large_constant'] = 5e3
+        args['backdoor_multiplier'] = 25.0
+        args['activation_signal_bound'] = 50.0
+        args['limiter_large_constant'] = 5e3
+        args['noise_threshold'] = 0.8
+        args['last_activation_multiplier'] = 100
+        args['features_add'] = 5.0
+        args['topk'] = 3
         bert_monitor = bert_backdoor_initialization(classifier, train_dataloader, args)
         print('use backdoor initialization')
 
@@ -72,12 +76,12 @@ def train_bert_classifier():
 
     for j in range(num_epochs):
         print(f'Epoch: {j}')
-        text_train(classifier, train_dataloader=train_dataloader, optimizer=optimizer, device=device)
+        text_train(classifier, train_dataloader=train_dataloader, optimizer=optimizer, device=device, is_debug=True, monitor=bert_monitor)
         acc, val_loss = text_evaluation(classifier, evaluation_dataloader=test_dataloader, device=device)
         print(f'Validation ACC:{acc}, LOSS:{val_loss}')
 
     if bert_monitor is not None:
-        torch.save(bert_monitor, f'{save_path}_{bert_monitor}.pth')
+        torch.save(bert_monitor, f'{save_path}_monitor.pth')
     torch.save(classifier.state_dict(), f'{save_path}_wt.pth')
 
 

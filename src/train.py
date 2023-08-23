@@ -214,7 +214,11 @@ def text_train(model, train_dataloader, optimizer, device='cpu', logger=None, is
         if is_debug:
             hidden_states = outputs['hidden_states']
             if monitor is not None:
-                monitor.get_backdoor_bias_change()
+                delta_bkd_bias_printable, delta_bias = monitor.get_backdoor_bias_change()
+                assert torch.all(delta_bias <= 0.0), 'there are negative gradient flow'
+                if step % 20 == 0:
+                    for j in range(len(delta_bkd_bias_printable)):
+                        print(delta_bkd_bias_printable[j])
 
             #Tuple of torch.FloatTensor (one for the output of the embeddings + one for the output of each layer) of shape
 
