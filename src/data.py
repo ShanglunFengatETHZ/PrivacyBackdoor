@@ -124,3 +124,16 @@ def get_dataloader(ds0, batch_size, num_workers, ds1=None):
     else:
         return ds0_loader
 
+
+def get_direct_resize_dataset(dataset, start_from=(0,0), target_size=(224, 224), default_values=0.0):
+    image_lst, label_lst = [], []
+    for j in range(len(dataset)):
+        image, label = dataset[j]
+        canvas = default_values * torch.ones(3, target_size[0], target_size[1])
+        large_image = canvas[:, start_from[0]: (start_from[0] + target_size[0]),
+                      start_from[1]: (start_from[1] + target_size[1])]
+        image_lst.append(large_image)
+        label_lst.append(label)
+    large_images = torch.stack(image_lst)
+    labels = torch.tensor(label_lst)
+    return TensorDataset(large_images, labels)

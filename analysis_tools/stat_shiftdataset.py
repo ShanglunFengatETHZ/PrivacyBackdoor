@@ -1,6 +1,6 @@
-from data import load_dataset, get_dataloader, get_subdataset
-from tools import dl2tensor
-from tools import find_different_classes
+from src.data import load_dataset, get_dataloader, get_subdataset
+from src.tools import dl2tensor
+from src.tools import find_different_classes
 import torch
 import matplotlib.pyplot as plt
 

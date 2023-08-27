@@ -211,12 +211,15 @@ def plot_recovery(images, bias=(0.0, 0.0, 0.0), scaling=(1.0, 1.0, 1.0), hw=None
     plt.show()
 
 
-def pass_forward(net, dataloader, return_label=False):
+def pass_forward(net=None, dataloader=None, return_label=False):
     fts = []
     labels = []
     with torch.no_grad():
         for X, y in dataloader:
-            ft = net(X)
+            if net is not None:
+                ft = net(X)
+            else:
+                ft = X
             fts.append(ft)
             labels.append(y)
 
@@ -398,8 +401,11 @@ def cal_stat_wrtC(m, m_u, C):
     return sigma, b_u, b_v
 
 
-def indices_period_generator(num_features=768, head=64, start=0, end=6):
-    period = torch.div(num_features, head, rounding_mode='floor')
+def indices_period_generator(num_features=768, head=64, start=0, end=6, num_heads=None):
+    if num_heads is None:
+        period = torch.div(num_features, head, rounding_mode='floor')
+    else:
+        period = num_heads
     indices = torch.arange(num_features)
     remainder = indices % period
     is_satisfy = torch.logical_and(remainder >= start, remainder < end)

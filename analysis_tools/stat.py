@@ -1,10 +1,9 @@
 import torch
 import matplotlib.pyplot as plt
 import argparse
-from model import ToyEncoder
-from data import load_dataset, get_subdataset, get_dataloader
+
 import math
-from tools import weights_generator, pass_forward
+from src.tools import weights_generator, pass_forward
 import torch.nn.functional as F
 
 
@@ -104,7 +103,11 @@ def cal_allquantiles(outputs, idxs=None, q=0.5):
 
 def main():
     args = parse_args()
+    import sys
+    sys.path.append('./src')
 
+    from data import ToyEncoder
+    from data import load_dataset, get_subdataset, get_dataloader
     # get dataset
     rs = args.rs
     ds_train, ds_test, resolution, _ = load_dataset(args.root, args.dataset)

@@ -5,7 +5,6 @@ import torch.nn as nn
 from random import choice
 import math
 from data import get_subdataset, load_dataset, get_dataloader
-from magic_component import edit_block_to_gradient_filter
 import copy
 import random
 # at first backdoor:64 * 1, images: 16 * 16 = 64 * 4 gray scaling
@@ -25,10 +24,36 @@ def channel_extraction(type='gray'):
     return color_weight
 
 
+def set_hidden_act(model, activation):
+    for layer in model.encoder.layers:
+        layer.mlp[1] = getattr(nn, activation)()
+
+
 def grayscale_images(images):
     assert images.dim() == 4 and images.shape[1] == 3
     color_weight = torch.tensor([0.30, 0.59, 0.11]).reshape(1, 3, 1, 1)
     return torch.sum(images * color_weight, dim=1)
+
+
+def close_attention(module):
+    module.ln_1.weight.data[:] = 0.
+    module.ln_1.bias.data[:] = 0.
+
+    module.self_attention.in_proj_weight.data[:] = 0.
+    module.self_attention.in_proj_bias.data[:] = 0.
+    module.self_attention.out_proj.weight.data[:] = 0.
+    module.self_attention.out_proj.bias.data[:] = 0.
+
+
+def close_mlp(module):
+    module.ln_2.weight.data[:] = 0.
+    module.ln_2.bias.data[:] = 0.
+
+    module.mlp[0].weight.data[:] = 0.
+    module.mlp[0].bias.data[:] = - 1e4
+
+    module.mlp[3].weight.data[:] = 0.
+    module.mlp[3].bias.data[:] = 0.
 
 
 def initial_conv_weight_generator(extracted_pixels, mode='gray', scaling=1.0, noise=None):
@@ -49,6 +74,7 @@ def initial_conv_weight_generator(extracted_pixels, mode='gray', scaling=1.0, no
 
 def bait_weight_generator(num_bkd, extracted_pixels, dl_train, dl_bait, bait_subset=0.2, channel_preprocess='gray',
                           noise=None, mode='native', qthres=0.999, bait_scaling=1.0, is_centralized=True):
+    # TODO: should be used in any graph
     # output quantile for encoding_scaling 1.0
     # if mode is native, we should
     # extracted_pixels is a bool matrix of 32 * 32
@@ -99,6 +125,37 @@ def bait_weight_generator(num_bkd, extracted_pixels, dl_train, dl_bait, bait_sub
         bait_bias.append(-1.0 * quantile_this_bait)
         bait_connect.append(connect_this_bait)
     return torch.stack(bait_weights), torch.stack(bait_bias), bait_connect
+
+
+def edit_block_to_gradient_filter(block, indices_hinder, indices_absorbing, indices_passing, C=1e5, shift_constant=10.0):
+    m_v_hd, m_v_ab = len(indices_hinder), len(indices_absorbing)
+    m_u, m_v = len(indices_passing), m_v_hd + m_v_ab
+    m = m_u + m_v
+    sigma, b_u, b_v = cal_stat_wrtC(m, m_u, C)
+
+    close_attention(block)
+    block.self_attention.out_proj.bias.data[indices_hinder] = C
+    block.self_attention.out_proj.bias.data[indices_absorbing] = C
+
+    # TODO: weight for absorbing
+    block.ln_2.weight.data[indices_absorbing] = 0.
+    block.ln_2.bias.data[indices_absorbing] = 0.
+    block.ln_2.weight.data[indices_passing] = 0.
+    block.ln_2.bias.data[indices_passing] = 0.
+    block.ln_2.weight.data[indices_hinder] = sigma
+    block.ln_2.bias.data[indices_hinder] = b_v
+    # block.ln_2.bias.retain_grad()
+
+    block.mlp[0].weight.data[:] = 0.
+    block.mlp[0].bias.data[:] = -1e4
+    block.mlp[0].weight.data[indices_hinder, indices_hinder] = 1.0 * m_v / m_v_ab
+    block.mlp[0].bias.data[indices_hinder] = shift_constant
+
+    block.mlp[3].weight.data[:] = 0.
+    block.mlp[3].bias.data[:] = 0.
+    block.mlp[3].weight.data[indices_hinder, indices_hinder] = -1.0
+    block.mlp[3].bias.data[indices_hinder] = shift_constant - C
+    block.mlp[3].bias.data[indices_absorbing] = - C
 
 
 def training_sample_processing(dl_train, image_process_func=None, noise=None, noise_scaling=0.0, extracted_pixels=None):
@@ -304,59 +361,14 @@ class TransformerWrapper(nn.Module):
     def set_factors(self, factors):
         self.factors = factors
 
-    """
-     def initialize(self, dl_train, passing_mode='close_block', v_scaling=5.0, is_zero_matmul=False, gap=10.0):
+    def encoder_parameters(self):
+        encoder_params = [param for name, param in self.model.named_parameters() if name not in ['heads.weight', 'heads.bias']]
+        return encoder_params
 
-        self.v_scaling = v_scaling
+    def heads_parameters(self):
+        return self.model.heads.parameters()
 
-        conv_weight_bias = initial_conv_weight_generator(extracted_pixels=self.extracted_pixels, mode='gray',
-                                                         scaling=self.conv_encoding_scaling, noise=self.noise)
-
-        tr_imgs_noise, tr_labels = training_sample_processing(dl_train, extracted_pixels=self.extracted_pixels,
-                                                              image_process_func=grayscale_images, noise=self.noise)
-        tr_imgs_input = self.conv_encoding_scaling * tr_imgs_noise
-        bkd_activate, threshold, bait_connect, _ = intelligent_gaussian_weight_generator(num_active_bkd=self.num_active_bkd, tr_imgs_raw=tr_imgs_input, tr_labels=tr_labels,
-                                                                                         num_trial=3000, gap_larger_than=gap, activate_more_than=0, bait_scaling=self.bait_scaling, neighbor_balance=(0.8, 0.2))
-        bait_weight, bait_bias = complete_bkd_weight_generator(num_bkd=len(self.indices_bkd), bkd_activate=bkd_activate, threshold=threshold, is_conv=False)
-
-        if self.is_double:
-            bait_weight = bait_weight.double()
-            bait_bias = bait_bias.double()
-
-            conv_weight, conv_bias = conv_weight_bias
-            conv_weight, conv_bias = conv_weight.double(), conv_bias.double()
-
-            conv_weight_bias = (conv_weight, conv_bias)
-
-        self.model.class_token.data[:] = self.model.class_token.detach().clone()
-        self.model.class_token.data[:, :, self.indices_bkd] = 0.
-        self.model.class_token.data[:, :, self.indices_img] = self.large_constant
-
-        edit_conv(self.model.conv_proj, indices_image_encoding=self.indices_img, params_image_channels=conv_weight_bias,
-                  indices_zero=self.indices_bkd,
-                  indices_dirty=self.indices_img, constant=self.large_constant)
-
-        layers = self.model.encoder.layers
-
-        edit_passing_layers(layers, passing_mode, indices_ft=self.indices_ft, indices_bkd=self.indices_bkd,
-                            indices_img=self.indices_img, C=self.large_constant, is_zero_matmul=is_zero_matmul)
-
-        edit_backdoor_block(getattr(layers, self.backdoorblock), indices_ft=self.indices_ft, indices_bkd=self.indices_bkd,
-                            indices_image=self.indices_img, C=self.large_constant, weight_bait=bait_weight, bias_bait=bait_bias, zeta=self.zeta)
-
-        edit_last_block(getattr(layers, self.synthesizeblocks), indices_ft=self.indices_ft, indices_bkd=self.indices_bkd,
-                        indices_img=self.indices_img, C=self.large_constant, v_scaling=self.v_scaling)
-
-        edit_terminalLN_identity_zero(self.model.encoder.ln, indices_ft=self.indices_ft, indices_bkd=self.indices_bkd,
-                                      indices_img=self.indices_img, C=self.large_constant)
-
-        edit_heads(self.model.heads, indices_bkd=self.indices_bkd, connect_set=bait_connect, constant=self.head_constant,
-                   indices_ft=self.indices_ft)
-
-        self.model0 = copy.deepcopy(self.model)   
-    """
-
-    def zero_track_initialize(self, dl_train, passing_mode='zero_pass', v_scaling=1.0, zoom=0.01, shift_constant=12.0, gap=10.0, is_zero_matmul=False, constants={}):
+    def backdoor_initialize(self, dl_train, passing_mode='zero_pass', v_scaling=1.0, zoom=0.01, shift_constant=12.0, gap=10.0, is_zero_matmul=False, constants={}):
         self.v_scaling = v_scaling
         self.zoom = zoom
         self.shift_constant = shift_constant
@@ -563,7 +575,7 @@ def edit_backdoor_block(module, indices_ft, indices_bkd, indices_image,
     assert m == len(module.ln_1.weight)
     sigma, b_u, b_v = cal_stat_wrtC(m, m_u, C)
 
-    close_first_part_this_module(module)
+    close_attention(module)
     if inner_large_constant:
         module.self_attention.out_proj.bias.data[indices_image] = C
 
@@ -594,7 +606,7 @@ def edit_zero_img_block(module, indices_unrelated, indices_2zero, C, zoom=0.01, 
     assert m == len(module.ln_1.weight)
     sigma, b_u, b_v = cal_stat_wrtC(m, m_u, C)
 
-    close_first_part_this_module(module)
+    close_attention(module)
 
     if inner_large_constant:
         module.self_attention.out_proj.bias.data[indices_2zero] = C
@@ -614,16 +626,6 @@ def edit_zero_img_block(module, indices_unrelated, indices_2zero, C, zoom=0.01, 
 
     if inner_large_constant:
         module.mlp[3].bias.data[indices_2zero] -= C
-
-
-def close_first_part_this_module(module):
-    module.ln_1.weight.data[:] = 0.
-    module.ln_1.bias.data[:] = 0.
-
-    module.self_attention.in_proj_weight.data[:] = 0.
-    module.self_attention.in_proj_bias.data[:] = 0.
-    module.self_attention.out_proj.weight.data[:] = 0.
-    module.self_attention.out_proj.bias.data[:] = 0.
 
 
 def edit_partition_layernormalization(module_target, indices_imitate, indices_zero, zero_order_mu, zero_order_sigma, module_source=None, factor=1.0):
@@ -728,23 +730,6 @@ def simulate_block(block_target, block_source, zero_indices=None, factor=1.0):
         block_target.mlp[3].bias.data[zero_indices] = 0.
 
 
-def close_second_part_this_module(module):
-    module.ln_2.weight.data[:] = 0.
-    module.ln_2.bias.data[:] = 0.
-
-    module.mlp[0].weight.data[:] = 0.
-    module.mlp[0].bias.data[:] = - 1e4
-
-    module.mlp[3].weight.data[:] = 0.
-    module.mlp[3].bias.data[:] = 0.
-
-
-def edit_closed_module(module):
-    # work on a complete EncoderBlock
-    close_first_part_this_module(module)
-    close_second_part_this_module(module)
-
-
 def edit_ending_attention(module, indices_bkd, v_scaling=50.0):
     #  merge all channels for activation and other features should be zero
     _, num_fts = module.in_proj_weight.shape
@@ -777,7 +762,7 @@ def edit_passing_layers(layers, passing_mode='close_block', indices_ft=None, ind
 
     if passing_mode == 'close_block':
         for block_tgt, _ in blocks:
-            edit_closed_module(block_tgt)
+            close_block(block_tgt)
 
     elif passing_mode == 'half_divided':
         m = len(indices_bkd) + len(indices_ft) + len(indices_img)
@@ -805,7 +790,7 @@ def edit_last_block(module, indices_ft, indices_bkd, indices_img, C, v_scaling=1
     assign_ln(module.ln_1, indices_bkd, weight=sigma, bias=b_u)
 
     edit_ending_attention(module.self_attention, indices_bkd, v_scaling=v_scaling)
-    close_second_part_this_module(module)
+    close_mlp(module)
 
 
 def edit_terminalLN_identity_zero(module, indices_ft, indices_bkd, indices_img, C):
@@ -828,6 +813,40 @@ def edit_heads(module, indices_bkd, connect_set, constant=1.0, indices_ft=None):
     module.weight.data[idx_output, indices_bkd[:len(idx_output)]] = constant
 
     module.bias.data[:] = 0.
+
+
+def close_block(block):
+    close_attention(block)
+    close_mlp(block)
+
+
+def half_activate_transformer(start_idx=1):
+    model0 = vit_b_32(weights=ViT_B_32_Weights.DEFAULT)
+    model_new = copy.deepcopy(model0)
+    model_new.heads = nn.Linear(768, 10)
+
+    indices_zero = indices_period_generator(num_features=768, head=64, start=7, end=12)
+
+    if indices_zero is not None:
+        model_new.conv_proj.weight.data[indices_zero] = 0.
+        model_new.conv_proj.bias.data[indices_zero] = 0.
+    model_new.class_token.data[:, :, indices_zero] = 0.
+
+    layers = ['encoder_layer_' + str(j) for j in range(12)]
+
+    for j in range(start_idx):
+        close_block(getattr(model_new.encoder.layers, layers[j]))
+
+    for j in range(12 - start_idx):
+        simulate_block(getattr(model_new.encoder.layers, layers[j + start_idx]), getattr(model0.encoder.layers, layers[j]),
+                       zero_indices=indices_zero)
+
+    close_block(model_new.encoder.layers.encoder_layer_11)
+
+    model_new.encoder.ln.weight.data[:] = 1.0
+    model_new.encoder.ln.bias.data[:] = 0.0
+    model_new.heads.weight.data[:, indices_zero] = 0.
+    return model_new
 
 
 if __name__ == '__main__':
@@ -888,7 +907,7 @@ if __name__ == '__main__':
 
     encoderblocks = ['encoder_layer_' + str(j) for j in range(1, 11)]
     for eb in encoderblocks:
-        edit_closed_module(getattr(model.encoder.layers, eb))
+        close_block(getattr(model.encoder.layers, eb))
 
     """
     for eb in encoderblocks:

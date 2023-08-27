@@ -1,7 +1,8 @@
 import torch
 from model import make_an_toy_net, make_conv_net
 from data import load_dataset, get_subdataset, get_dataloader
-from train import train_model, get_optimizer
+from train import train_model
+from torch.optim import SGD
 
 
 def get_subset_dataloader(dataset, subset=None, random_seed=12345678):
@@ -132,7 +133,7 @@ def build_model(info_dataset, info_model, info_train, logger, save_path):
         model = initialize_easynet_model(info_model, resolution=resolution, classes=classes,
                                          dataset=test_dataset, dl_target_distribution=dl_target_distribution)
 
-    optimizer = get_optimizer(model, learning_rate)
+    optimizer = SGD(model.parameters(), lr=learning_rate)
     torch.manual_seed(train_random_seed)
     model = train_model(model, dataloaders=dataloaders, optimizer=optimizer, num_epochs=num_epochs, device=device, logger=logger, verbose=verbose)
     torch.save(model, save_path)

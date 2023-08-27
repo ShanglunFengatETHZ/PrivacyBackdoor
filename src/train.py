@@ -1,20 +1,7 @@
 import torch
 import torch.nn as nn
-from torch.optim import SGD
 from opacus.utils.batch_memory_manager import BatchMemoryManager
 
-
-def get_optimizer(model, lr=0.1, heads_factor=None, only_linear_probe=False):
-    # TODO: abandon this function, to work in transformer, output parameters in different part for wrapper.
-    if heads_factor is None:
-        params = model.parameters()
-        return SGD(params=params, lr=lr)
-    else:
-        params_encoder = [param for name, param in model.named_parameters() if name not in ['heads.weight', 'heads.bias']]
-        params_fc = model.heads.parameters()
-        if only_linear_probe:
-            return SGD([{'params': params_fc, 'lr': lr}])
-        return SGD([{'params': params_encoder, 'lr': lr}, {'params': params_fc, 'lr': lr * heads_factor}])
 
 # TODO: use the following codes to control the random values
 # TODO: random.seed(seed_val)
@@ -23,7 +10,7 @@ def get_optimizer(model, lr=0.1, heads_factor=None, only_linear_probe=False):
 # TODO: torch.cuda.manual_seed_all(seed_val)
 
 
-def train_model(model, dataloaders, optimizer, num_epochs, device='cpu', verbose=False, direct_resize=None, logger=None):
+def train_model(model, dataloaders, optimizer, num_epochs, device='cpu', verbose=False, logger=None):
     # only adjust device in this function
     model = model.to(device)
     loss_func = nn.CrossEntropyLoss()
@@ -47,10 +34,6 @@ def train_model(model, dataloaders, optimizer, num_epochs, device='cpu', verbose
                 if verbose:
                     print(f'batch {i}')
                 inputs, labels = this_batch
-                if direct_resize is not None:
-                    big_inputs = torch.zeros(inputs.shape[0], inputs.shape[1], direct_resize, direct_resize)
-                    big_inputs[:, :, 0:inputs.shape[2], 0:inputs.shape[3]] = inputs
-                    inputs = big_inputs
 
                 inputs = inputs.to(device)
                 labels = labels.to(device)

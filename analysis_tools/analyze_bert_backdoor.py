@@ -3,7 +3,7 @@ from tools import indices_period_generator
 from transformers import BertTokenizer
 
 if __name__ == '__main__':
-    path = './weights/bert_v1_monitor.pth'
+    path = './weights/bert_v3_monitor.pth'
     indices_ft = indices_period_generator(num_features=768, head=64, start=0, end=8)
     monitor = torch.load(path)
     # feature_code, _ = None
@@ -24,4 +24,5 @@ if __name__ == '__main__':
         print(f'text:{monitor.get_text(tokenizer, word_code)}')
         print(f'word similarity:{similarity_1st}')
         print(f'word second similarity:{similarity_2nd}')
+        print('\n')
 

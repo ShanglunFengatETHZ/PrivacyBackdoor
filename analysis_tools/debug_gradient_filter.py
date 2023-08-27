@@ -8,40 +8,7 @@ import copy
 from tools import cal_stat_wrtC
 
 
-def edit_block_to_gradient_filter(block, indices_hinder, indices_absorbing, indices_passing, C=1e5, shift_constant=10.0):
-    m_v_hd, m_v_ab = len(indices_hinder), len(indices_absorbing)
-    m_u, m_v = len(indices_passing), m_v_hd + m_v_ab
-    m = m_u + m_v
-    sigma, b_u, b_v = cal_stat_wrtC(m, m_u, C)
 
-    block.ln_1.weight.data[:] = 0.
-    block.ln_1.bias.data[:] = 0.
-    block.self_attention.in_proj_weight.data[:] = 0.
-    block.self_attention.in_proj_bias.data[:] = 0.
-    block.self_attention.out_proj.weight.data[:] = 0.
-    block.self_attention.out_proj.bias.data[:] = 0.
-    block.self_attention.out_proj.bias.data[indices_hinder] = C
-    block.self_attention.out_proj.bias.data[indices_absorbing] = C
-
-    # TODO: weight for absorbing
-    block.ln_2.weight.data[indices_absorbing] = 0.
-    block.ln_2.bias.data[indices_absorbing] = 0.
-    block.ln_2.weight.data[indices_passing] = 0.
-    block.ln_2.bias.data[indices_passing] = 0.
-    block.ln_2.weight.data[indices_hinder] = sigma
-    block.ln_2.bias.data[indices_hinder] = b_v
-    # block.ln_2.bias.retain_grad()
-
-    block.mlp[0].weight.data[:] = 0.
-    block.mlp[0].bias.data[:] = -1e4
-    block.mlp[0].weight.data[indices_hinder, indices_hinder] = 1.0 * m_v / m_v_ab
-    block.mlp[0].bias.data[indices_hinder] = shift_constant
-
-    block.mlp[3].weight.data[:] = 0.
-    block.mlp[3].bias.data[:] = 0.
-    block.mlp[3].weight.data[indices_hinder, indices_hinder] = -1.0
-    block.mlp[3].bias.data[indices_hinder] = shift_constant - C
-    block.mlp[3].bias.data[indices_absorbing] = - C
 
 
 if __name__ == '__main__':
