@@ -178,6 +178,7 @@ def evaluation(model, test_loader, device, use_inner_output=True):
 
 
 def text_train(model, train_dataloader, optimizer, device='cpu', logger=None, is_debug=False, monitor=None):
+    # TODO: make it complete
     total_train_loss = 0
     model.train()
     is_correct_lst = []
