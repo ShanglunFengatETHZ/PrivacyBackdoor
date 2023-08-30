@@ -177,15 +177,57 @@ def evaluation(model, test_loader, device, use_inner_output=True):
     return acc
 
 
-def text_train(model, train_dataloader, optimizer, device='cpu', logger=None, is_debug=False, monitor=None):
-    # TODO: make it complete
+def text_debug(monitor, debug_dict=None, logger=None, step=None):
+    print_period = debug_dict.get('print_period', 1)
+    delta_bkd_bias_printable, delta_bkd_bias, delta_bkd_estimate_printable, delta_bkd_estimate = monitor.get_backdoor_change()
+    if step % print_period == 0:
+        if logger is None:
+            print(f'*** STEP {step}: delta bias ***')
+        else:
+            logger.info(f'*** STEP {step}: delta bias ***')
+        for j in range(len(delta_bkd_bias_printable)):
+            if logger is None:
+                print(f'sequence{j}:{delta_bkd_bias_printable[j]}')
+            else:
+                logger.info(f'sequence{j}:{delta_bkd_bias_printable[j]}')
+
+        if logger is None:
+            print(f'*** STEP {step}: delta estimate ***')
+        else:
+            logger.info(f'*** STEP {step}: delta estimate ***')
+        for j in range(len(delta_bkd_estimate_printable)):
+            if logger is None:
+                print(f'sequence{j}:{delta_bkd_estimate_printable[j]}')
+            else:
+                logger.info(f'sequence{j}:{delta_bkd_estimate_printable[j]}')
+
+    neg_grad_flow_strategy = debug_dict.get('negative_gradient_flow_strategy', 'reject')
+
+    delta_bkd_bias = monitor.d1tod2(delta_bkd_bias)
+    exist_negative_grad_flow = torch.logical_not(torch.all(delta_bkd_bias <= 0.0))
+    match neg_grad_flow_strategy:
+        case 'reject':
+            assert not exist_negative_grad_flow, 'there are negative gradient flow'
+        case 'report':
+            neg_grad_flow_this_sequence = (torch.sum(delta_bkd_bias > 0.0, dim=-1) > 0)
+            for j in range(len(delta_bkd_bias)):
+                if neg_grad_flow_this_sequence[j]:
+                    if logger is None:
+                        print(f'step:{step}, sequence{j}: {delta_bkd_bias[j].tolist()}')
+                    else:
+                        logger.info(f'step:{step}, sequence{j}:{delta_bkd_bias[j].tolist()}')
+        case _:
+            pass
+
+
+def text_train(model, train_dataloader, optimizer, device='cpu',
+               logger=None, is_debug=False, debug_dict=None, monitor=None):
     total_train_loss = 0
     model.train()
     is_correct_lst = []
 
     for step, batch in enumerate(train_dataloader):
         if step % 20 == 0 and not step == 0:
-            if logger is None:
                 print('  Batch {:>5,}  of  {:>5,}'.format(step, len(train_dataloader)))
         input_ids, input_mask, labels = batch
         input_ids = input_ids.to(device)
@@ -194,17 +236,9 @@ def text_train(model, train_dataloader, optimizer, device='cpu', logger=None, is
 
         model.zero_grad()
         outputs = model(input_ids, token_type_ids=None, attention_mask=input_mask, labels=labels)
-        loss, logits = outputs['loss'], outputs['logits']
-        if is_debug:
-            hidden_states = outputs['hidden_states']
-            if monitor is not None:
-                delta_bkd_bias_printable, delta_bias = monitor.get_backdoor_bias_change()
-                assert torch.all(delta_bias <= 0.0), 'there are negative gradient flow'
-                if step % 20 == 0:
-                    for j in range(len(delta_bkd_bias_printable)):
-                        print(delta_bkd_bias_printable[j])
-
-            #Tuple of torch.FloatTensor (one for the output of the embeddings + one for the output of each layer) of shape
+        loss, logits, hidden_states = outputs['loss'], outputs['logits'], outputs['hidden_states']
+        if is_debug and monitor is not None:
+            text_debug(monitor, debug_dict=debug_dict, logger=logger, step=step)
 
         total_train_loss += loss.item()
         _, preds = torch.max(logits, 1)
@@ -217,8 +251,7 @@ def text_train(model, train_dataloader, optimizer, device='cpu', logger=None, is
     avg_train_loss = total_train_loss / len(train_dataloader)
     is_correct_all = torch.cat(is_correct_lst)
     acc = torch.mean(is_correct_all.float()).item()
-    if logger is None:
-        print(f'Accuracy:{acc}, Loss:{avg_train_loss}')
+    return acc, avg_train_loss
 
 
 def text_evaluation(model, evaluation_dataloader, device='cpu'):

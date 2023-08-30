@@ -1,12 +1,11 @@
 import torch
-from model import ToyConvEncoder
-from tools import conv_weights_generator, reshape_weight_to_sub_image, reshape_a_feature_to_sub_image
+from src.model import ToyConvEncoder
+from src.tools import conv_weights_generator, reshape_weight_to_sub_image, reshape_a_feature_to_sub_image
 
 from model import LNRegistrar, ConvRegistrar
 from tools import which_images_activate_this_door
 
 if __name__ == '__main__':
-    """
     images = torch.rand(200, 3, 32, 32)
     encoder = ToyConvEncoder(32, 4, is_normalize=False)
 
@@ -28,12 +27,11 @@ if __name__ == '__main__':
 
     encoder0 = ToyConvEncoder(32, 2, is_normalize=False)
     fts = encoder0(images)
-    images_recover_from_fts = reshape_fts_to_sub_images(fts[:,:,1,1], 3, 16, 16)
+    images_recover_from_fts = reshape_a_feature_to_sub_image(fts[:,:,1,1], 3, 16, 16)
     print('recover images from features')
     print(torch.sum(torch.ne(images[:,:,16:,16:], images_recover_from_fts)))
+
     """
-
-
     num_samples, num_output = 64, 10
     num_exist = 10
     idx = torch.multinomial(torch.ones(num_samples * num_output), num_exist)
@@ -54,7 +52,7 @@ if __name__ == '__main__':
     print(f'activate valid frequency {register.valid_activate_freq}')
     print(f'is_mixture {register.is_mixture}')
     print(f'update this step: {register.print_update_this_step()}')
-
+    """
 
     """
     num_samples, num_output, num_h, num_w = 64, 10, 2, 2

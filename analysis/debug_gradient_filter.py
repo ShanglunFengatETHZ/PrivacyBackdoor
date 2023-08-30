@@ -2,13 +2,10 @@ import torch
 from data import get_subdataset, load_dataset, get_dataloader
 from torchvision.models import vit_b_32, ViT_B_32_Weights
 from tools import indices_period_generator
-from train import train_model, get_optimizer
+from train import train_model
 import torch.nn as nn
 import copy
 from tools import cal_stat_wrtC
-
-
-
 
 
 if __name__ == '__main__':

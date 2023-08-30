@@ -1,5 +1,5 @@
 import torch
-
+from src.model_adv import DiffPrvBackdoorRegistrar
 
 if __name__ == '__main__':
     path_to_registrar = './weights/test_dpbkd_rgs_ex0.pth'

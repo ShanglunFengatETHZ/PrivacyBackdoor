@@ -66,7 +66,7 @@ def select_position_embedding(embedding, max_len, correlation_bounds):
 
 def edit_embedding(module, ft_indices, blank_indices, multiplier=1.0, position_clean_multiplier=0.0, position_clean_indices=None,
                    large_constant_indices=None, large_constant=0.0, max_len=48, mirror_symmetry=True, ignore_special_notation=True,
-                   num_trial=500, correlation_bounds=(0.0, 1.0)):
+                   num_trial=500, correlation_bounds=(0.0, 1.0), freeze_grad=False):
     # position indices have 1 L2-norm
     word_embeddings = module.word_embeddings
     position_embeddings = module.position_embeddings
@@ -118,9 +118,14 @@ def edit_embedding(module, ft_indices, blank_indices, multiplier=1.0, position_c
         token_type_embeddings.weight.data[:, large_constant_indices] += large_constant
         stabilize_layernormal(ln, large_constant=large_constant, large_constant_indices=large_constant_indices)
 
+    if freeze_grad:
+        for param in module.parameters():
+            param.requires_grad = False
+
 
 def edit_feature_synthesize(attention_module, indices_source_entry, indices_target_entry, large_constant_indices=None,
-                            signal_value_multiplier=1.0, signal_out_multiplier=1.0, large_constant=0.0, mirror_symmetry=True, approach='gaussian', output_scaling=1.0):
+                            signal_value_multiplier=1.0, signal_out_multiplier=1.0, large_constant=0.0,
+                            mirror_symmetry=True, approach='gaussian', output_scaling=1.0, freeze_grad=False):
     close_attention(attention_module, input_module=False)
     attention_module.self.value.weight.data[indices_source_entry, indices_source_entry] = 1.0 * signal_value_multiplier
 
@@ -156,6 +161,10 @@ def edit_feature_synthesize(attention_module, indices_source_entry, indices_targ
         stabilize_layernormal(attention_module.output.LayerNorm, large_constant=large_constant,
                               large_constant_indices=large_constant_indices, scaling=output_scaling)
 
+    if freeze_grad:
+        for param in attention_module.parameters():
+            param.requires_grad = False
+
 
 def edit_backdoor_mlp(module, indices_bkd_sequences, bait_signal, thres_signal, indices_signal,
                       bait_position, thres_position, indices_position, indices_act=None, act_multiplier=1.0,
@@ -183,8 +192,10 @@ def edit_backdoor_mlp(module, indices_bkd_sequences, bait_signal, thres_signal, 
                               indices_zero=indices_others, scaling=output_scaling)
 
 
-def edit_limiter(module, act_indices=None, threshold=0.0, large_constant=0.0, large_constant_indices=None,
-                 last_ln_weight=None, last_ln_bias=None, act_ln_op_multiplier=0.0, open_limit=True):
+def edit_limiter(module, act_indices=None,
+                 large_constant=0.0, large_constant_indices=None,
+                 last_ln_weight=None, last_ln_bias=None, act_ln_op_multiplier=0.0,
+                 cancel_noise=False, noise_threshold=0.0, soft_factor=1.0):
     # this is used for controling the upper bound of activation signal
 
     n = module.intermediate.dense.in_features
@@ -196,25 +207,24 @@ def edit_limiter(module, act_indices=None, threshold=0.0, large_constant=0.0, la
 
     close_mlp(module)
 
-    if open_limit:
-        module.intermediate.dense.weight.data[act_indices, act_indices] = 1.0
-        module.intermediate.dense.bias.data[act_indices] = 0.0
-        module.output.dense.weight.data[act_indices, act_indices] = -1.0
+    if cancel_noise:
+        module.intermediate.dense.weight.data[act_indices, act_indices] = -1.0 * soft_factor
+        module.intermediate.dense.bias.data[act_indices] = noise_threshold * soft_factor
+        module.output.dense.weight.data[act_indices, act_indices] = 1.0 / soft_factor
+        module.output.dense.bias.data[act_indices] -= noise_threshold
 
-        module.intermediate.dense.weight.data[act_indices + n, act_indices] = - 1.0
-        module.intermediate.dense.bias.data[act_indices + n] = threshold
-        module.output.dense.weight.data[act_indices, act_indices + n] = -1.0
-        module.output.dense.bias.data[act_indices] = threshold
+    if last_ln_weight is not None:
+        module.output.LayerNorm.weight.data[:] = last_ln_weight
 
-    module.output.LayerNorm.weight.data[:] = last_ln_weight
-    module.output.LayerNorm.bias.data[:] = last_ln_bias
+    if last_ln_bias is not None:
+        module.output.LayerNorm.bias.data[:] = last_ln_bias
 
     module.output.LayerNorm.weight.data[act_indices] = act_ln_op_multiplier
     module.output.LayerNorm.bias.data[act_indices] = 0.0
 
 
 def edit_direct_passing(module, act_indices, act_ln_attention_multiplier=1.0, act_ln_output_multiplier=1.0, act_ln_quantile=None,
-                        use_amplifier=False, amplifier_multiplier=0.0, noise_thres=0.0, amplifier_soft_factor=1.0,
+                        use_amplifier=False, amplifier_multiplier=0.0, noise_thres=0.0, soft_factor=1.0,
                         use_canceller=False, canceller_threshold=0.0):
     # input should not depend on act_indices, output should keep 0 + activation signal
 
@@ -261,17 +271,17 @@ def edit_direct_passing(module, act_indices, act_ln_attention_multiplier=1.0, ac
     if amplifier_indices is not None:
         for j in range(len(act_indices)):
             module.intermediate.dense.weight.data[amplifier_indices[j], :] = 0.0
-            module.intermediate.dense.weight.data[amplifier_indices[j], act_indices[j]] = 1.0 * amplifier_soft_factor
-            module.intermediate.dense.bias.data[amplifier_indices[j]] = -1.0 * noise_thres * amplifier_soft_factor
-            module.output.dense.weight.data[act_indices[j], amplifier_indices[j]] = amplifier_multiplier / amplifier_soft_factor
+            module.intermediate.dense.weight.data[amplifier_indices[j], act_indices[j]] = 1.0 * soft_factor
+            module.intermediate.dense.bias.data[amplifier_indices[j]] = -1.0 * noise_thres * soft_factor
+            module.output.dense.weight.data[act_indices[j], amplifier_indices[j]] = amplifier_multiplier / soft_factor
 
     if canceller_indices is not None:
         for j in range(len(act_indices)):
             module.intermediate.dense.weight.data[canceller_indices[j], :] = 0.0
-            module.intermediate.dense.weight.data[canceller_indices[j], act_indices[j]] = - 1.0
-            module.intermediate.dense.bias.data[canceller_indices[j]] = canceller_threshold
-            module.output.dense.weight.data[act_indices[j], canceller_indices[j]] = 1.0
-            module.output.dense.weight.data[act_indices[j]] -= 1.0
+            module.intermediate.dense.weight.data[canceller_indices[j], act_indices[j]] = - 1.0 * soft_factor
+            module.intermediate.dense.bias.data[canceller_indices[j]] = canceller_threshold * soft_factor
+            module.output.dense.weight.data[act_indices[j], canceller_indices[j]] = 1.0 / soft_factor
+            module.output.dense.bias.data[act_indices[j]] -= 1.0 * canceller_threshold
 
 
 def edit_activation_synthesize(module, act_indices=None, large_constant=None, large_constant_indices=None):
@@ -335,10 +345,10 @@ def block_translate(layers, indices_source_blks=None, indices_target_blks=None):
         layers[idx_tgt].load_state_dict(weights[idx_src])
 
 
-def bait_mirror_position_generator(position_embedding, posi_start=0, posi_end=48, indices_clean=None, multiplier=1.0, neighbor_balance=(0.0, 1.0)):
+def bait_mirror_position_generator(position_embedding, posi_start=0, posi_end=48, indices_clean=None, multiplier=1.0, neighbor_balance=(0.0, 1.0), scaling=1.0):
     idx_position = torch.arange(start=posi_start, end=posi_end)
 
-    posi_embed = position_embedding[idx_position]
+    posi_embed = position_embedding[idx_position] * scaling
     if indices_clean is not None:
         posi_embed = posi_embed[:, indices_clean]  # position * entry
     posi_embed_normalized = multiplier * posi_embed / posi_embed.norm(dim=1, keepdim=True)  # num_position * indices_clean
@@ -567,6 +577,7 @@ def bert_backdoor_initialization(classifier, dataloader4bait, args_weight, args_
     hidden_size = classifier.config.hidden_size
     num_heads = classifier.config.num_attention_heads
     hidden_group_dict = args_weight['HIDDEN_GROUP']
+    print(hidden_group_dict)
     indices_ft = indices_period_generator(hidden_size, num_heads=num_heads, start=hidden_group_dict['features'][0], end=hidden_group_dict['features'][1])
     indices_occupied = cal_set_difference_seq(hidden_size, indices_ft)
     indices_ps = indices_period_generator(hidden_size, num_heads=num_heads, start=hidden_group_dict['position'][0], end=hidden_group_dict['position'][1])
@@ -581,7 +592,8 @@ def bert_backdoor_initialization(classifier, dataloader4bait, args_weight, args_
     embedding_dict = args_weight['EMBEDDING']
     edit_embedding(classifier.bert.embeddings, ft_indices=indices_ft, blank_indices=indices_occupied, multiplier=embedding_dict['emb_multiplier'],
                    position_clean_multiplier=embedding_dict['pst_multiplier'], position_clean_indices=indices_ps, large_constant_indices=indices_occupied,
-                   large_constant=embedding_dict['large_constant'], max_len=max_len, mirror_symmetry=True, ignore_special_notation=True, correlation_bounds=embedding_dict['correlation_bounds'])
+                   large_constant=embedding_dict['large_constant'], max_len=max_len, mirror_symmetry=True,
+                   ignore_special_notation=True, correlation_bounds=embedding_dict['correlation_bounds'], freeze_grad=embedding_dict['freeze_grad'])
 
     # major body
     working_hidden_layers = num_hidden_layers - 3
@@ -593,21 +605,22 @@ def bert_backdoor_initialization(classifier, dataloader4bait, args_weight, args_
     ftsyn_dict = args_weight['FEATURE_SYNTHESIZER']
     edit_feature_synthesize(classifier.bert.encoder.layer[0].attention, indices_source_entry=indices_ft, indices_target_entry=indices_signal,
                             large_constant_indices=indices_occupied, large_constant=ftsyn_dict['large_constant'], signal_value_multiplier=ftsyn_dict['signal_value_multiplier'],
-                            signal_out_multiplier=ftsyn_dict['signal_out_multiplier'], mirror_symmetry=True, approach='direct_add', output_scaling=ftsyn_dict['output_scaling'])
+                            signal_out_multiplier=ftsyn_dict['signal_out_multiplier'], mirror_symmetry=True,
+                            approach='direct_add', output_scaling=ftsyn_dict['output_scaling'], freeze_grad=ftsyn_dict['freeze_grad'])
     classifier.bert.encoder.layer[0].attention.output.LayerNorm.bias.data[indices_ft] += ftsyn_dict['add']
 
     # deal with bait-related information
-    # TODO: adjust limiter, considering pooler activation
     bait_position_dict, bait_signal_dict, bait_selection_dict = args_bait['POSITION'], args_bait['SIGNAL'], args_bait['SELECTION']
     posi_bait_start, posi_bait_end = bait_position_dict.get('start', 0), bait_position_dict.get('end', max_len)
     posi_bait, posi_threshold, gap = bait_mirror_position_generator(classifier.bert.embeddings.position_embeddings.weight,
                                                                     posi_start=posi_bait_start, posi_end=posi_bait_end, indices_clean=indices_ps,
-                                                                    multiplier=bait_position_dict['multiplier'], neighbor_balance=bait_position_dict['neighbor_balance'])  # we can do not use all baits but should have
+                                                                    multiplier=bait_position_dict['multiplier'], neighbor_balance=bait_position_dict['neighbor_balance'],
+                                                                    scaling=ftsyn_dict['output_scaling'])  # we can do not use all baits but should have
     considered_sequence_length = posi_bait_end - posi_bait_start
     print(f'position embedding threahold:{posi_threshold}, gap:{gap}')
     native_attention_encoder = NativeOneAttentionEncoder(classifier.bert)
     features, labels = pass_forward_text(native_attention_encoder, dataloader=dataloader4bait, return_label=True)
-    seq_bait, possible_classes, seq_quantity, willing_fishes = gaussian_seq_bait_generator(inputs=(features[:, 0], labels), num_output=100 * num_backdoors,
+    seq_bait, possible_classes, seq_quantity, willing_fishes = gaussian_seq_bait_generator(inputs=(features[:, 1], labels), num_output=100 * num_backdoors,
                                                                                            topk=bait_signal_dict['topk'], input_mirror_symmetry=True, signal_indices=indices_signal, multiplier=bait_signal_dict['multiplier'])
     seq_bait, possible_classes, seq_quantity, willing_fishes = select_bait(weights=seq_bait, possible_classes=possible_classes, quantities=seq_quantity,
                                                                            willing_fishes=willing_fishes, num_output=num_backdoors, **bait_selection_dict)
@@ -629,9 +642,10 @@ def bert_backdoor_initialization(classifier, dataloader4bait, args_weight, args_
 
     # limiter is an auxiliary modules after backdoor module and before regular module
     limiter_dict = args_weight['LIMITER']
-    edit_limiter(classifier.bert.encoder.layer[1], act_indices=indices_bkd, threshold=limiter_dict['activation_signal_bound'],
-                 large_constant=limiter_dict['large_constant'], large_constant_indices=indices_occupied, last_ln_weight=embedding_ln_weight,
-                 last_ln_bias=embedding_ln_bias, act_ln_op_multiplier=torch.median(embedding_ln_weight), open_limit=False)
+    edit_limiter(classifier.bert.encoder.layer[1], act_indices=indices_bkd,
+                 large_constant=limiter_dict['large_constant'], large_constant_indices=indices_occupied,
+                 last_ln_weight=embedding_ln_weight, last_ln_bias=embedding_ln_bias, act_ln_op_multiplier=torch.median(embedding_ln_weight),
+                 cancel_noise=limiter_dict['cancel_noise'], noise_threshold=limiter_dict['noise_threshold'], soft_factor=limiter_dict['soft_factor'])
 
     # working prediction
     act_quantiles_attention = 0.5 * torch.ones(12)
@@ -652,7 +666,7 @@ def bert_backdoor_initialization(classifier, dataloader4bait, args_weight, args_
         act_ln_output = act_ln_output_layers[j]
         edit_direct_passing(classifier.bert.encoder.layer[j], act_indices=indices_bkd, act_ln_attention_multiplier=act_ln_attention,
                             act_ln_output_multiplier=act_ln_output, use_amplifier=passing_dict['USE_AMPLIFIER'], amplifier_multiplier=passing_dict['MULTIPLIER'][j],
-                            noise_thres=passing_dict['PASS_THRESHOLD'][j], amplifier_soft_factor=passing_dict['SOFT_FACTOR'],
+                            noise_thres=passing_dict['PASS_THRESHOLD'][j], soft_factor=passing_dict['SOFT_FACTOR'],
                             use_canceller=passing_dict['USE_CANCELLER'], canceller_threshold=passing_dict['CANCELLER_THRESHOLD'])
 
     # ending
@@ -668,18 +682,20 @@ def bert_backdoor_initialization(classifier, dataloader4bait, args_weight, args_
 
 
 class BertMonitor:
-    def __init__(self, initial_embedding, initial_backdoor, backdoor_indices, clean_position_indices, other_blks=None):
+    def __init__(self, initial_embedding=None, initial_backdoor=None, backdoor_indices=None, clean_position_indices=None, other_blks=None):
         # backdoor indices should be two dimension: different sequence * entry in a sequence
-        self.initial_embedding_weights = copy.deepcopy(initial_embedding.state_dict())
-        self.initial_backdoor_weights = copy.deepcopy(initial_backdoor.state_dict())
+        if initial_embedding is not None and initial_backdoor is not None:
+            self.initial_embedding_weights = copy.deepcopy(initial_embedding.state_dict())
+            self.initial_backdoor_weights = copy.deepcopy(initial_backdoor.state_dict())
 
-        self.current_embedding_weights = initial_embedding.state_dict()
-        self.current_backdoor_weights = initial_backdoor.state_dict()
+            self.current_embedding_weights = initial_embedding.state_dict()
+            self.current_backdoor_weights = initial_backdoor.state_dict()
 
-        assert isinstance(backdoor_indices, torch.Tensor) or isinstance(backdoor_indices, list)
-        if isinstance(backdoor_indices, torch.Tensor):
-            assert backdoor_indices.dim() == 2
-        self.backdoor_indices = backdoor_indices
+        if backdoor_indices is not None:
+            assert isinstance(backdoor_indices, torch.Tensor) or isinstance(backdoor_indices, list)
+            if isinstance(backdoor_indices, torch.Tensor):
+                assert backdoor_indices.dim() == 2
+            self.backdoor_indices = backdoor_indices
         self.clean_position_indices = clean_position_indices
 
         self.embedding_submodules = ['word_embeddings', 'position_embeddings', 'token_type_embeddings', 'LayerNorm']
@@ -690,6 +706,23 @@ class BertMonitor:
             self.other_modules_weights = copy.deepcopy(other_blks.state_dict())
         elif other_blks is not None:
             self.other_modules_weights = [copy.deepcopy(blk.state_dict()) for blk in other_blks]
+        else:
+            self.other_modules_weights = None
+
+    def save_bert_monitor_information(self):
+        return {
+            'initial_embedding_weights': self.initial_embedding_weights,
+            'initial_backdoor_weights': self.initial_backdoor_weights,
+            'current_embedding_weights': self.current_embedding_weights,
+            'current_backdoor_weights': self.current_backdoor_weights,
+            'backdoor_indices': self.backdoor_indices,
+            'clean_position_indices': self.clean_position_indices,
+            'other_modules_weights': self.other_modules_weights,
+        }
+
+    def load_bert_monitor_information(self, monitor_info):
+        for key in monitor_info.keys():
+            setattr(self, key, monitor_info[key])
 
     def _extract_information(self, block, submodule, suffix='weight'):
         # TODO: what information should we print in every step?
@@ -703,7 +736,7 @@ class BertMonitor:
             return self.initial_backdoor_weights[weight_name], self.current_backdoor_weights[weight_name]
 
     def _remind(self):
-        return {'embedding': self.embedding_submodules, 'encoderblock':self.encoderblock_submodules}
+        return {'embedding': self.embedding_submodules, 'encoderblock': self.encoderblock_submodules}
 
     def get_update_a_sequence(self, indices_bkd_this_sequence=None, target_entries=None):
         delta_weights = self.current_backdoor_weights['intermediate.dense.weight'] - self.initial_backdoor_weights['intermediate.dense.weight']
@@ -766,8 +799,15 @@ class BertMonitor:
     def get_text(self, tokenizer, sequence):
         return tokenizer.decode(sequence, skip_special_tokens=True)
 
+    def d1tod2(self, inputs):
+        outputs_lst = []
+        for this_bkd_seq_indices in self.backdoor_indices:
+            input_this_seq = inputs[this_bkd_seq_indices]
+            outputs_lst.append(input_this_seq)
+        return torch.stack(outputs_lst)
+
+
     def get_backdoor_change(self):
-        # TODO: print bias-related
         init_bkd_bias,  curr_bkd_bias = self._extract_information(block='encoderblock', submodule='intermediate.dense', suffix='bias')
         delta_bkd_bias = curr_bkd_bias - init_bkd_bias
 
@@ -794,7 +834,7 @@ class BertMonitor:
 
         init_emb_weights, curr_emb_weights = self._extract_information(block='embedding', submodule=submodule, suffix=suffix)
         init_emb_wt, curr_emb_wt = init_emb_weights[:max_len, indices_entry], curr_emb_weights[:max_len, indices_entry]
-        delta_emb_wt = curr_emb_wt - init_emb_wt # number of considered position * num entries
+        delta_emb_wt = curr_emb_wt - init_emb_wt  # number of considered position * num entries
 
         delta_emb_wt.norm(dim=1)
         init_emb_wt.norm(dim=1)
@@ -802,64 +842,101 @@ class BertMonitor:
         return delta_emb_wt / init_emb_wt
 
 
+def show_vanilla(outputs, classifier):
+    hidden_states = outputs['hidden_states']
+    print(f'embedding: {hidden_states[0][:, 1, indices_ft].std()}, {hidden_states[0][:, 2, indices_ft].std()}')
+    for j in range(12):
+        print(f'after layer: {j}')
+        print(f'{hidden_states[j+1][0, 1, torch.arange(11, 700, 12)[:32]].max()}, {hidden_states[j+1][0, 1, torch.arange(11, 700, 12)[:32]].min()}, {hidden_states[j+1][0, 1].std()}, {hidden_states[j+1][0, 1, torch.arange(11, 700, 12)[:32]].max()/ hidden_states[j+1][0, 1].std()}')
+        print(f'layernormal:{classifier.bert.encoder.layer[j].attention.output.LayerNorm.weight[11]}, {classifier.bert.encoder.layer[j].attention.output.LayerNorm.bias[11]}, {classifier.bert.encoder.layer[j].output.LayerNorm.weight[11]}, {classifier.bert.encoder.layer[j].output.LayerNorm.bias[11]}')
+        print(f'\n')
+    print('after test')
+
+
 if __name__ == '__main__':
-    # WHY the will become larger?
-    tokenizer = BertTokenizer.from_pretrained('bert-base-uncased', do_lower_case=True)
-    dataset_name = 'trec'
-    max_len = 48
-    batch_size = 32
+    start_from_scratch = False
+
     num_backdoors = 32
+
+    tokenizer = BertTokenizer.from_pretrained('bert-base-uncased', do_lower_case=True)
+    dataset_name, max_len, batch_size, = 'trec', 48, 32
     train_dataset, test_dataset, num_classes = load_text_dataset(dataset=dataset_name, tokenizer=tokenizer, max_len=max_len)
     train_dataloader = get_dataloader(train_dataset, batch_size=batch_size, num_workers=2)
 
     config = AutoConfig.from_pretrained('bert-base-uncased')
-    config.hidden_act = 'relu'
-    config.hidden_dropout_prob = 0.0
-    config.attention_probs_dropout_prob = 0.0
-    config.num_labels = num_classes
-    config.output_attentions = True
-    config.output_hidden_states = True
-    classifier0 = BertForSequenceClassification.from_pretrained(pretrained_model_name_or_path='bert-base-uncased', config=config)
-    classifier = BertForSequenceClassification.from_pretrained(pretrained_model_name_or_path='bert-base-uncased', config=config)
-    classifier.bert.pooler.activation = nn.ReLU()
+    config.hidden_act, config.num_labels = 'relu', num_classes
+    config.hidden_dropout_prob, config.attention_probs_dropout_prob = 0.0, 0.0
+    config.output_attentions, config.output_hidden_states = True, True
+    classifier_v0 = BertForSequenceClassification.from_pretrained(pretrained_model_name_or_path='bert-base-uncased', config=config)
+    classifier_v1 = BertForSequenceClassification.from_pretrained(pretrained_model_name_or_path='bert-base-uncased', config=config)
+    classifier_v0.bert.pooler.activation, classifier_v1.bert.pooler.activation = nn.ReLU(), nn.ReLU()
 
-    weight_setting = {
-        'HIDDEN_GROUP': {'features': (0, 8), 'position': (8, 9), 'signal': (9, 11), 'backdoor': (11, 12)},
-        'EMBEDDING': {'emb_multiplier': 100.0, 'pst_multiplier': 200.0, 'large_constant': 5000.0},
-        'FEATURE_SYNTHESIZER': {'large_constant': 5000.0, 'signal_value_multiplier': 1.0, 'signal_out_multiplier': 1.0,
-                                'add': 5.0},
-        'BACKDOOR': {'multiplier': 25.0, 'large_constant': 5000.0},
-        'LIMITER': {'large_constant': 5000.0},
-        'PASSING_AMPLIFIER': {'MULTIPLIER': [0.2, 0.2, 0.2, 0.3, 0.3, 0.3, 0.3, 0.3, 0.3, 0.3, 0.3, 0.3],
-                              'PASS_THRESHOLD': [0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2]},
-        'ENDING': {'pooler_multiplier': 0.5, 'pooler_noise_threshold': 0.8, 'classifier_backdoor_multiplier': 20.0} }
-    bait_setting = {}
+    if start_from_scratch:
+        weight_setting = {
+            'HIDDEN_GROUP': {'features': (0, 8), 'position': (8, 9), 'signal': (9, 11), 'backdoor': (11, 12)},
+            'EMBEDDING': {'emb_multiplier': 100.0, 'pst_multiplier': 200.0, 'large_constant': 5000.0,
+                          'correlation_bounds': (0.2, 0.6)},
+            'FEATURE_SYNTHESIZER': {'large_constant': 5000.0, 'signal_value_multiplier': 1.0,
+                                    'signal_out_multiplier': 1.0, 'add': 5.0, 'output_scaling': 1.0},
+            'BACKDOOR': {'multiplier': 25.0, 'large_constant': 5000.0, 'output_scaling': 1.0},
+            'LIMITER': {'large_constant': 5000.0, 'cancel_noise': False, 'noise_threshold': 0.0, 'soft_factor': 1.0},
+            'PASSING_AMPLIFIER': {
+                'USE_AMPLIFIER': True,
+                'MULTIPLIER': [0.2, 0.2, 0.2, 0.3, 0.3, 0.3, 0.3, 0.3, 0.3, 0.3, 0.3, 0.3],
+                'PASS_THRESHOLD': [0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2]},
+            'SOFT_FACTOR': 1.0,
+            'USE_CANCELLER': False,
+            'CANCELLER_THRESHOLD': 0.2,
+            'ENDING': {'pooler_multiplier': 0.5, 'pooler_noise_threshold': 0.8, 'classifier_backdoor_multiplier': 20.0}
+        }
 
-    bert_backdoor_initialization(classifier, dataloader4bait=train_dataloader, args_weight=weight_setting, args_bait=None, max_len=max_len, num_backdoors=num_backdoors)
-    native_attention_it = NativeOneAttentionEncoder(bertmodel=classifier.bert, use_intermediate=True, before_intermediate=True)
-    native_attention_at = NativeOneAttentionEncoder(bertmodel=classifier.bert, use_intermediate=False)
+        bait_setting = {
+            'POSITION': {'multiplier': 20.0, 'neighbor_balance': (0.01, 0.99), 'start': 0, 'end': 48},
+            'SIGNAL': {'topk': 5, 'multiplier': 1.0, 'neighbor_balance': (0.2, 0.8), 'is_random': False},
+            'SELECTION': {'no_intersection': None, 'max_multiple': None, 'min_gap': None, 'min_lowerbound': None, 'max_possible_classes': None}
+        }
 
-    # this is used for debugging easily.
+        monitor = bert_backdoor_initialization(classifier_v1, dataloader4bait=train_dataloader, args_weight=weight_setting,
+                                    args_bait=bait_setting, max_len=max_len, num_backdoors=num_backdoors)
+        native_attention_it_v0, native_attention_at_v0 = None, None
+        native_attention_it_v1 = NativeOneAttentionEncoder(bertmodel=classifier_v1.bert, use_intermediate=True, before_intermediate=True)
+        native_attention_at_v1 = NativeOneAttentionEncoder(bertmodel=classifier_v1.bert, use_intermediate=False)
+    else:
+        path = './weights/debug_small_monitor.pth'
+        monitor_info = torch.load(path, map_location='cpu')
+        monitor = BertMonitor()
+        monitor.load_bert_monitor_information(monitor_info)
+
+        classifier_v0.bert.embeddings.load_state_dict(monitor.initial_embedding_weights)
+        classifier_v0.bert.encoder.layer[0].load_state_dict(monitor.initial_backdoor_weights)
+        classifier_v1.bert.embeddings.load_state_dict(monitor.current_embedding_weights)
+        classifier_v1.bert.encoder.layer[0].load_state_dict(monitor.current_backdoor_weights)
+
+        native_attention_it_v0 = NativeOneAttentionEncoder(bertmodel=classifier_v0.bert, use_intermediate=True, before_intermediate=True)
+        native_attention_at_v0 = NativeOneAttentionEncoder(bertmodel=classifier_v0.bert, use_intermediate=False)
+        native_attention_it_v1 = NativeOneAttentionEncoder(bertmodel=classifier_v1.bert, use_intermediate=True, before_intermediate=True)
+        native_attention_at_v1 = NativeOneAttentionEncoder(bertmodel=classifier_v1.bert, use_intermediate=False)
+
     indices_ft = indices_period_generator(num_features=768, head=64, start=0, end=8)
     indices_occupied = cal_set_difference_seq(768, indices_ft)
     indices_ps = indices_period_generator(num_features=768, head=64, start=8, end=9)
     indices_signal = indices_period_generator(num_features=768, head=64, start=9, end=11)
-    indices_bkd = indices_period_generator(num_features=768, head=64, start=11, end=12)[:32]
-    indices_bkd_sequences = []
-    for j in range(32):
-        indices_bkd_sequences.append(torch.arange(max_len * j, max_len * (j + 1)))
+    indices_bkd = indices_period_generator(num_features=768, head=64, start=11, end=12)[:num_backdoors]
+    indices_bkd_sequences = monitor.backdoor_indices
 
     with torch.no_grad():
         for step, batch in enumerate(train_dataloader):
             input_ids, input_mask, labels = batch
-            attention_signal = native_attention_at(input_ids, token_type_ids=None, attention_mask=input_mask)
-            activation_signal = native_attention_it(input_ids, token_type_ids=None, attention_mask=input_mask)
-            outputs = classifier(input_ids, token_type_ids=None, attention_mask=input_mask, labels=labels)
-            hidden_states = outputs['hidden_states']
-            print(f'embedding: {hidden_states[0][:, 1, indices_ft].std()}, {hidden_states[0][:, 2, indices_ft].std()}')
-            for j in range(12):
-                print(f'after layer: {j}')
-                print(f'{hidden_states[j+1][0, 1, torch.arange(11, 700, 12)[:32]].max()}, {hidden_states[j+1][0, 1, torch.arange(11, 700, 12)[:32]].min()}, {hidden_states[j+1][0, 1].std()}, {hidden_states[j+1][0, 1, torch.arange(11, 700, 12)[:32]].max()/ hidden_states[j+1][0, 1].std()}')
-                print(f'layernormal:{classifier.bert.encoder.layer[j].attention.output.LayerNorm.weight[11]}, {classifier.bert.encoder.layer[j].attention.output.LayerNorm.bias[11]}, {classifier.bert.encoder.layer[j].output.LayerNorm.weight[11]}, {classifier.bert.encoder.layer[j].output.LayerNorm.bias[11]}')
-                print(f'\n')
-            print('after test')
+            if native_attention_at_v0 is not None and native_attention_it_v0 is not None:
+                attention_signal_v0 = native_attention_at_v0(input_ids, token_type_ids=None, attention_mask=input_mask)
+                activation_signal_v0 = native_attention_it_v0(input_ids, token_type_ids=None, attention_mask=input_mask)
+                outputs_v0 = classifier_v0(input_ids, token_type_ids=None, attention_mask=input_mask, labels=labels)
+                hidden_states_v0 = outputs_v0['hidden_states']
+            if native_attention_at_v1 is not None and native_attention_it_v1 is not None:
+                attention_signal_v1 = native_attention_at_v1(input_ids, token_type_ids=None, attention_mask=input_mask)
+                activation_signal_v1 = native_attention_it_v1(input_ids, token_type_ids=None, attention_mask=input_mask)
+                outputs_v1 = classifier_v1(input_ids, token_type_ids=None, attention_mask=input_mask, labels=labels)
+                hidden_states_v1 = outputs_v1['hidden_states']
+            print(f'finish step:{step}')
+
+

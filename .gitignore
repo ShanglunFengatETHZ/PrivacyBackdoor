@@ -155,12 +155,25 @@ cython_debug/
 #  and can be added to the global gitignore or merged into this file.  For a more nuclear
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
-analysis_tools/analyze_bert_backdoor.py
-analysis_tools/analyze_bert_backdoor.py
-analysis_tools/check_difference.py
-analysis_tools/analyze_bert_backdoor.py
-analysis_tools/analyze_dp_backdoor.py
-analysis_tools/check_difference.py
-analysis_tools/debug.py
-analysis_tools/debug_gradient_filter.py
-analysis_tools/debug_zerotracktransformer.py
+analysis/analyze_bert_backdoor.py
+analysis/analyze_bert_backdoor.py
+analysis/check_difference.py
+analysis/analyze_bert_backdoor.py
+analysis/analyze_dp_backdoor.py
+analysis/check_difference.py
+analysis/debug.py
+analysis/debug_gradient_filter.py
+analysis/debug_zerotracktransformer.py
+analysis/analyze_bert_backdoor.py
+analysis/analyze_dp_backdoor.py
+analysis/check_difference.py
+analysis/debug.py
+analysis/debug_gradient_filter.py
+analysis/debug_zerotracktransformer.py
+analysis/plot_bipolarization.py
+analysis/plot_gelu.py
+analysis/plot_scaling.py
+analysis/plot_twintrackbkd.py
+analysis/stat.py
+analysis/stat_shiftdataset.py
+analysis/stat_subimage.py
