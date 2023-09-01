@@ -64,6 +64,8 @@ def build_bert_classifier(info_dataset, info_model, info_train, logger=None, sav
 
     for j in range(num_epochs):
         print(f'Epoch: {j}')
+        if j > 0:
+            is_debug = False
         acc, avg_train_loss = text_train(classifier, train_dataloader=train_dataloader, optimizer=optimizer, device=device,
                                          logger=logger, is_debug=is_debug, debug_dict=debug_dict, monitor=bert_monitor)
         print(f'Accuracy:{acc}, Loss:{avg_train_loss}')
@@ -91,7 +93,7 @@ if __name__ == '__main__':
     weight_setting = {
         'HIDDEN_GROUP': {'features': (0, 8), 'position': (8, 9), 'signal': (9, 11), 'backdoor': (11, 12)},
         'EMBEDDING': {'emb_multiplier': 100.0, 'pst_multiplier': 200.0, 'large_constant': 5000.0, 'correlation_bounds': (0.2, 0.6)},
-        'FEATURE_SYNTHESIZER': {'large_constant': 5000.0, 'signal_value_multiplier': 1.0, 'signal_out_multiplier': 1.0, 'add': 5.0, 'output_scaling':1.0},
+        'FEATURE_SYNTHESIZER': {'large_constant': 5000.0, 'signal_value_multiplier': 1.0, 'signal_out_multiplier': 1.0, 'add': 5.0, 'output_scaling': 1.0},
         'BACKDOOR': {'multiplier': 25.0, 'large_constant': 5000.0, 'output_scaling': 1.0},
         'LIMITER': {'large_constant': 5000.0, 'cancel_noise': False, 'noise_threshold': 0.0,'soft_factor': 1.0},
         'PASSING_AMPLIFIER': {
@@ -113,6 +115,6 @@ if __name__ == '__main__':
     info_model['WEIGHT_SETTING'] = weight_setting
 
     info_train = {'BATCH_SIZE': 32, 'LR': 1e-4, 'LR_PROBE': 0.2, 'EPOCHS': 1, 'DEVICE': 'cpu', 'NUM_WORKERS': 2,
-                  'VERBOSE': False, 'IS_DEBUG': False, 'DEBUG_DICT': {'print_period':20, 'negative_gradient_flow_strategy':'report'}}
+                  'VERBOSE': False, 'IS_DEBUG': False, 'DEBUG_DICT': {'print_period': 20, 'negative_gradient_flow_strategy': 'report'}}
     build_bert_classifier(info_dataset=info_dataset, info_model=info_model, info_train=info_train)
 
