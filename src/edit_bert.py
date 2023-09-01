@@ -66,7 +66,7 @@ def select_position_embedding(embedding, max_len, correlation_bounds):
 
 def edit_embedding(module, ft_indices, blank_indices, multiplier=1.0, position_clean_multiplier=0.0, position_clean_indices=None,
                    large_constant_indices=None, large_constant=0.0, max_len=48, mirror_symmetry=True, ignore_special_notation=True,
-                   num_trial=500, correlation_bounds=(0.0, 1.0), freeze_grad=False):
+                   num_trial=5000, correlation_bounds=(0.0, 1.0), freeze_grad=False):
     # position indices have 1 L2-norm
     word_embeddings = module.word_embeddings
     position_embeddings = module.position_embeddings
@@ -475,12 +475,13 @@ def get_backdoor_threshold(upperlowerbound, neighbor_balance=(0.2, 0.8), is_rand
 
 
 class NativeOneAttentionEncoder(nn.Module):
-    def __init__(self, bertmodel, use_intermediate=False, before_intermediate=False):
+    def __init__(self, bertmodel, use_intermediate=False, before_intermediate=False, output_values=False):
         # bertmodel is model.bert
         super().__init__()
         self.bertmodel = bertmodel
         self.embeddings = bertmodel.embeddings
         self.attention = bertmodel.encoder.layer[0].attention
+        self.output_values = output_values
 
         if use_intermediate:
             if before_intermediate:
@@ -516,6 +517,8 @@ class NativeOneAttentionEncoder(nn.Module):
 
         if self.intermediate is not None:
             return self.intermediate(attention_output)
+        elif self.output_values:
+            return attention_output, self.attention.self(embedding_output)
         else:
             return attention_output
 
@@ -771,6 +774,7 @@ class BertMonitor:
         largest_lst = []
         second_lst = []
         word_code_lst = []
+        alternative_code_lst = []
         for j in range(len(features_this_seq)):
             posi_this_word = indices_position[j]
             features_this_word = features_this_seq[j]
@@ -780,11 +784,12 @@ class BertMonitor:
                     features_this_word = features_this_word - features_this_word.mean()
                 features_this_word = features_this_word / features_this_word.norm(dim=-1, keepdim=True)
                 similarity = torch.abs(dictionary @ features_this_word)
-                values, indices= similarity.topk(2)
+                values, indices = similarity.topk(2)
                 largest_lst.append(values[0].item())
                 second_lst.append(values[1].item())
                 word_code_lst.append(indices[0].item())
-        return word_code_lst, largest_lst, second_lst
+                alternative_code_lst.append(indices[1].item())
+        return word_code_lst, largest_lst, alternative_code_lst, second_lst
 
     def get_digital_code(self, sequence, dictionary):
         # sequence: length_sequence * num_entry, dictionary: num_digital * num_entry
@@ -796,8 +801,8 @@ class BertMonitor:
 
         return indices[:, 0], values[:, 0], values[:, 1]
 
-    def get_text(self, tokenizer, sequence):
-        return tokenizer.decode(sequence, skip_special_tokens=True)
+    def get_text(self, tokenizer, sequence, skip_special_tokens=True):
+        return tokenizer.decode(sequence, skip_special_tokens=skip_special_tokens)
 
     def d1tod2(self, inputs):
         outputs_lst = []
@@ -805,7 +810,6 @@ class BertMonitor:
             input_this_seq = inputs[this_bkd_seq_indices]
             outputs_lst.append(input_this_seq)
         return torch.stack(outputs_lst)
-
 
     def get_backdoor_change(self):
         init_bkd_bias,  curr_bkd_bias = self._extract_information(block='encoderblock', submodule='intermediate.dense', suffix='bias')
@@ -902,7 +906,7 @@ if __name__ == '__main__':
         native_attention_it_v1 = NativeOneAttentionEncoder(bertmodel=classifier_v1.bert, use_intermediate=True, before_intermediate=True)
         native_attention_at_v1 = NativeOneAttentionEncoder(bertmodel=classifier_v1.bert, use_intermediate=False)
     else:
-        path = './weights/debug_small_monitor.pth'
+        path = './weights/weak_shrink_monitor.pth'
         monitor_info = torch.load(path, map_location='cpu')
         monitor = BertMonitor()
         monitor.load_bert_monitor_information(monitor_info)
@@ -913,9 +917,9 @@ if __name__ == '__main__':
         classifier_v1.bert.encoder.layer[0].load_state_dict(monitor.current_backdoor_weights)
 
         native_attention_it_v0 = NativeOneAttentionEncoder(bertmodel=classifier_v0.bert, use_intermediate=True, before_intermediate=True)
-        native_attention_at_v0 = NativeOneAttentionEncoder(bertmodel=classifier_v0.bert, use_intermediate=False)
+        native_attention_at_v0 = NativeOneAttentionEncoder(bertmodel=classifier_v0.bert, use_intermediate=False, output_values=True)
         native_attention_it_v1 = NativeOneAttentionEncoder(bertmodel=classifier_v1.bert, use_intermediate=True, before_intermediate=True)
-        native_attention_at_v1 = NativeOneAttentionEncoder(bertmodel=classifier_v1.bert, use_intermediate=False)
+        native_attention_at_v1 = NativeOneAttentionEncoder(bertmodel=classifier_v1.bert, use_intermediate=False, output_values=True)
 
     indices_ft = indices_period_generator(num_features=768, head=64, start=0, end=8)
     indices_occupied = cal_set_difference_seq(768, indices_ft)
@@ -928,12 +932,12 @@ if __name__ == '__main__':
         for step, batch in enumerate(train_dataloader):
             input_ids, input_mask, labels = batch
             if native_attention_at_v0 is not None and native_attention_it_v0 is not None:
-                attention_signal_v0 = native_attention_at_v0(input_ids, token_type_ids=None, attention_mask=input_mask)
+                attention_signal_v0, attention_mid_v0 = native_attention_at_v0(input_ids, token_type_ids=None, attention_mask=input_mask)
                 activation_signal_v0 = native_attention_it_v0(input_ids, token_type_ids=None, attention_mask=input_mask)
                 outputs_v0 = classifier_v0(input_ids, token_type_ids=None, attention_mask=input_mask, labels=labels)
                 hidden_states_v0 = outputs_v0['hidden_states']
             if native_attention_at_v1 is not None and native_attention_it_v1 is not None:
-                attention_signal_v1 = native_attention_at_v1(input_ids, token_type_ids=None, attention_mask=input_mask)
+                attention_signal_v1, attention_mid_v1 = native_attention_at_v1(input_ids, token_type_ids=None, attention_mask=input_mask)
                 activation_signal_v1 = native_attention_it_v1(input_ids, token_type_ids=None, attention_mask=input_mask)
                 outputs_v1 = classifier_v1(input_ids, token_type_ids=None, attention_mask=input_mask, labels=labels)
                 hidden_states_v1 = outputs_v1['hidden_states']
