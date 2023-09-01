@@ -49,18 +49,18 @@ def build_bert_classifier(info_dataset, info_model, info_train, logger=None, sav
         args_bait = info_model['BAIT_SETTING']
         # TODO: use another dataset to generate bait
         bert_monitor = bert_backdoor_initialization(classifier, dataloader4bait=train_dataloader, args_weight=args_weight, args_bait=args_bait,
-                                                    max_len=max_len, num_backdoors=num_backdoors)
+                                                    max_len=max_len, num_backdoors=num_backdoors, device=device)
         print('use backdoor initialization')
     elif use_semi_active_initialization:
         args = {'regular_features_group': (0, 8), 'large_constant': 5e3, 'embedding_multiplier': 20.0}
         bert_semi_active_initialization(classifier, args)
         bert_monitor = None
+        classifier = classifier.to(device)
         print('use semi-active initialization')
     else:
         bert_monitor = None
 
     optimizer = SGD([{'params': classifier.bert.parameters(), 'lr': learning_rate}, {'params': classifier.classifier.parameters(), 'lr': learning_rate_probe}])
-    classifier = classifier.to(device)
 
     for j in range(num_epochs):
         print(f'Epoch: {j}')

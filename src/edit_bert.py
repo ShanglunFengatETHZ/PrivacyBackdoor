@@ -571,7 +571,7 @@ def bert_semi_active_initialization(classifier, args):
     edit_pooler(classifier.bert.pooler)  # pooler
 
 
-def bert_backdoor_initialization(classifier, dataloader4bait, args_weight, args_bait, max_len=48, num_backdoors=32):
+def bert_backdoor_initialization(classifier, dataloader4bait, args_weight, args_bait, max_len=48, num_backdoors=32, device=None):
     num_classes = classifier.config.num_labels
     classes = set([i for i in range(num_classes)])
     num_hidden_layers = classifier.config.num_hidden_layers
@@ -680,6 +680,8 @@ def bert_backdoor_initialization(classifier, dataloader4bait, args_weight, args_
     wrong_classes = [random.choice(list(classes.difference(ps_this_bkd))) for ps_this_bkd in possible_classes]
     edit_probe(classifier.classifier, act_indices=indices_bkd, wrong_classes=wrong_classes,
                activation_multiplier=ending_dict['classifier_backdoor_multiplier'])
+    if device is not None:
+        classifier = classifier.to(device)
     print('FINISH INITIALIZATION')
     return BertMonitor(classifier.bert.embeddings, classifier.bert.encoder.layer[0], indices_bkd_sequences, indices_ps)
 
