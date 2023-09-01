@@ -69,8 +69,15 @@ def build_bert_classifier(info_dataset, info_model, info_train, logger=None, sav
         acc, avg_train_loss = text_train(classifier, train_dataloader=train_dataloader, optimizer=optimizer, device=device,
                                          logger=logger, is_debug=is_debug, debug_dict=debug_dict, monitor=bert_monitor)
         print(f'Accuracy:{acc}, Loss:{avg_train_loss}')
+        if logger is not None:
+            logger.info(f'Accuracy:{acc}, Loss:{avg_train_loss}')
         acc, val_loss = text_evaluation(classifier, evaluation_dataloader=test_dataloader, device=device)
         print(f'Validation ACC:{acc}, LOSS:{val_loss}')
+        if logger is not None:
+            logger.info(f'Validation ACC:{acc}, LOSS:{val_loss}')
+
+        if j == 0:
+            bert_monitor.save_checkpoints()
 
     if save_path is not None:
         if bert_monitor is not None:

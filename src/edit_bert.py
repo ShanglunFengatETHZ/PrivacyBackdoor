@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from tools import cal_set_difference_seq, cal_stat_wrtC, indices_period_generator, pass_forward_text
 from transformers import BertTokenizer, AutoConfig, BertForSequenceClassification
 from data import get_dataloader, load_text_dataset
@@ -714,6 +715,8 @@ class BertMonitor:
         else:
             self.other_modules_weights = None
 
+        self.ckpt = []
+
     def save_bert_monitor_information(self):
         return {
             'initial_embedding_weights': self.initial_embedding_weights,
@@ -723,7 +726,12 @@ class BertMonitor:
             'backdoor_indices': self.backdoor_indices,
             'clean_position_indices': self.clean_position_indices,
             'other_modules_weights': self.other_modules_weights,
+            'ckpt': self.ckpt
         }
+
+    def save_checkpoints(self):
+        self.ckpt.append({'embedding_weights': copy.deepcopy(self.current_embedding_weights),
+                          'backdoor_weights': copy.deepcopy(self.current_backdoor_weights)})
 
     def load_bert_monitor_information(self, monitor_info):
         for key in monitor_info.keys():
@@ -908,15 +916,15 @@ if __name__ == '__main__':
         native_attention_it_v1 = NativeOneAttentionEncoder(bertmodel=classifier_v1.bert, use_intermediate=True, before_intermediate=True)
         native_attention_at_v1 = NativeOneAttentionEncoder(bertmodel=classifier_v1.bert, use_intermediate=False)
     else:
-        path = './weights/weak_shrink_monitor.pth'
+        path = './weights/txbkd_exp0_monitor.pth'
         monitor_info = torch.load(path, map_location='cpu')
         monitor = BertMonitor()
         monitor.load_bert_monitor_information(monitor_info)
 
         classifier_v0.bert.embeddings.load_state_dict(monitor.initial_embedding_weights)
         classifier_v0.bert.encoder.layer[0].load_state_dict(monitor.initial_backdoor_weights)
-        classifier_v1.bert.embeddings.load_state_dict(monitor.current_embedding_weights)
-        classifier_v1.bert.encoder.layer[0].load_state_dict(monitor.current_backdoor_weights)
+        classifier_v1.bert.embeddings.load_state_dict(monitor.ckpt[0]['embedding_weights'])
+        classifier_v1.bert.encoder.layer[0].load_state_dict(monitor.ckpt[0]['backdoor_weights'])
 
         native_attention_it_v0 = NativeOneAttentionEncoder(bertmodel=classifier_v0.bert, use_intermediate=True, before_intermediate=True)
         native_attention_at_v0 = NativeOneAttentionEncoder(bertmodel=classifier_v0.bert, use_intermediate=False, output_values=True)
@@ -932,6 +940,9 @@ if __name__ == '__main__':
 
     with torch.no_grad():
         for step, batch in enumerate(train_dataloader):
+            if step > 0:
+                break
+
             input_ids, input_mask, labels = batch
             if native_attention_at_v0 is not None and native_attention_it_v0 is not None:
                 attention_signal_v0, attention_mid_v0 = native_attention_at_v0(input_ids, token_type_ids=None, attention_mask=input_mask)
@@ -944,5 +955,10 @@ if __name__ == '__main__':
                 outputs_v1 = classifier_v1(input_ids, token_type_ids=None, attention_mask=input_mask, labels=labels)
                 hidden_states_v1 = outputs_v1['hidden_states']
             print(f'finish step:{step}')
+
+    print(f'{round(attention_signal_v0[0,1,indices_ps].norm().item(),3)},{round(attention_signal_v1[0,1,indices_ps].norm().item(),3)},{round(F.cosine_similarity(attention_signal_v0[0,1,indices_ps], attention_signal_v1[0,1,indices_ps], dim=0).item(),3)}')
+    print(f'{round(attention_signal_v0[0, 1, indices_signal].norm().item(),3)},{round(attention_signal_v1[0, 1, indices_signal].norm().item(),3)},{round(F.cosine_similarity(attention_signal_v0[0, 1, indices_signal], attention_signal_v1[0, 1, indices_signal], dim=0).item(),3)}')
+
+
 
 

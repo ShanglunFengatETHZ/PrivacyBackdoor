@@ -5,17 +5,31 @@ from transformers import BertTokenizer
 import numpy as np
 
 
-def print_reconstruction_to_table(path, max_len, word_code_lst, smlar_1st_lst, alter_code_lst, smlar_2nd_lst, monitor, tokenizer):
+def print_reconstruction_to_table(path, max_len,  posi_lst, posi_similarity, word_code_lst, smlar_1st_lst, alter_code_lst, smlar_2nd_lst, monitor, tokenizer, na_notation=''):
     with open(path, 'wt') as f:
         for j in range(len(word_code_lst)):
             word_code, smlar_1st, alter_code, smlar_2nd = word_code_lst[j], smlar_1st_lst[j], alter_code_lst[j], smlar_2nd_lst[j]
+            posi_number, posi_similar = posi_lst[j], posi_similarity[j]
+
             word = []
             s1 = []
             alter = []
             s2 = []
+            posi = []
+            sm_posi = []
+
             for k in range(max_len):
                 this_word = word_code[k]
                 this_alter = alter_code[k]
+                this_posi = posi_number[k]
+
+                if this_posi > 0:
+                    posi.append(str(int(this_posi)))
+                    sm_posi.append(str(round(posi_similar[k].item(), 2)))
+                else:
+                    posi.append(na_notation)
+                    sm_posi.append(na_notation)
+
                 if this_word > 1000:  # ignore special character
                     new_word = monitor.get_text(tokenizer, [this_word], skip_special_tokens=False)
                     if new_word == ',':
@@ -23,8 +37,8 @@ def print_reconstruction_to_table(path, max_len, word_code_lst, smlar_1st_lst, a
                     word.append(new_word)
                     s1.append(str(round(smlar_1st[k], 2)))
                 else:
-                    word.append('NA')
-                    s1.append('NA')
+                    word.append(na_notation)
+                    s1.append(na_notation)
 
                 if this_alter > 1000:  # ignore special character
                     new_alter = monitor.get_text(tokenizer, [this_alter], skip_special_tokens=False)
@@ -33,27 +47,36 @@ def print_reconstruction_to_table(path, max_len, word_code_lst, smlar_1st_lst, a
                     alter.append(new_alter)
                     s2.append(str(round(smlar_2nd[k], 2)))
                 else:
-                    alter.append('NA')
-                    s2.append('NA')
+                    alter.append(na_notation)
+                    s2.append(na_notation)
 
             word = ','.join(word)
             s1 = ','.join(s1)
             alter = ','.join(alter)
             s2 = ','.join(s2)
+            posi = ','.join(posi)
+            sm_posi = ','.join(sm_posi)
+
             print(f'word,{word}', file=f)
             print(f'similarity,{s1}', file=f)
+            print(f'position,{posi}', file=f)
+            print(f'similarity,{sm_posi}', file=f)
             print(f'alternative,{alter}', file=f)
             print(f'similarity,{s2}', file=f)
 
 
-def print_readable_word(path, word_code, monitor, tokenizer):
-    pass
+
+def print_readable_word(path, word_code_lst, monitor, tokenizer):
+    with open(path, 'wt') as f:
+        for word_code in word_code_lst:
+            print(monitor.get_text(tokenizer, word_code, skip_special_tokens=True), file=f)
 
 
 if __name__ == '__main__':
     output_zero = True
-    path = './weights/weak_shrink_monitor.pth'
-    # save_path = './text_reconstruction.csv'
+    path = './weights/txbkd_exp0_monitor.pth'
+    save_path_full = './experiments/results/20230901_bert_vanilla/reconstruct_full_exp0.csv'
+    save_path_pre = './experiments/results/20230901_bert_vanilla/reconstruct_pre_exp0.txt'
     skip = True
     print_second = True
     monitor_information = torch.load(path, map_location='cpu')
@@ -65,6 +88,8 @@ if __name__ == '__main__':
     position_code_used = position_code_all[:, monitor.clean_position_indices]
     tokenizer = BertTokenizer.from_pretrained('bert-base-uncased', do_lower_case=True)
 
+    posi_lst = []
+    posi_similarity = []
     word_code_lst = []
     smlar_1st_lst = []
     alter_code_lst = []
@@ -76,8 +101,9 @@ if __name__ == '__main__':
                                                                               target_entries=[monitor.clean_position_indices, indices_ft])
 
         posi_idx, similarity, second_similarity = monitor.get_digital_code(sequence=posi_code_this_seq, dictionary=position_code_used)
-        word_code, similarity_1st, alternative_code, similarity_2nd = monitor.get_text_digital_code_this_sequence(features_this_seq, posi_idx,
-                                                                                                indices_ft,  centralize=True, output_zero=output_zero)
+        word_code, similarity_1st, alternative_code, similarity_2nd = monitor.get_text_digital_code_this_sequence(features_this_seq, posi_idx, indices_ft,  centralize=True, output_zero=output_zero)
+        posi_lst.append(posi_idx)
+        posi_similarity.append(similarity)
         word_code_lst.append(word_code)
         smlar_1st_lst.append(similarity_1st)
         alter_code_lst.append(alternative_code)
@@ -94,7 +120,13 @@ if __name__ == '__main__':
             print(f'word second similarity:{similarity_2nd}')
         print('\n')
 
-    # print_reconstruction_to_table(save_path, 32, word_code_lst, smlar_1st_lst, alter_code_lst, smlar_2nd_lst, monitor, tokenizer)
+    if save_path_full is not None:
+        print_reconstruction_to_table(save_path_full, 32, posi_lst, posi_similarity, word_code_lst, smlar_1st_lst, alter_code_lst, smlar_2nd_lst, monitor, tokenizer)
+
+    if save_path_pre is not None:
+        print_readable_word(save_path_pre, word_code_lst, monitor, tokenizer)
+
+
 
 
 
