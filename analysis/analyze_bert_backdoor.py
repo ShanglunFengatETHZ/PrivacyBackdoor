@@ -5,7 +5,7 @@ from transformers import BertTokenizer
 import numpy as np
 
 
-def print_reconstruction_to_table(path, max_len,  posi_lst, posi_similarity, word_code_lst, smlar_1st_lst, alter_code_lst, smlar_2nd_lst, monitor, tokenizer, na_notation=''):
+def print_reconstruction_to_table(path, max_len,  posi_lst, posi_similarity, word_code_lst, smlar_1st_lst, alter_code_lst, smlar_2nd_lst, monitor, tokenizer, na_notation='', output_items=[]):
     with open(path, 'wt') as f:
         for j in range(len(word_code_lst)):
             word_code, smlar_1st, alter_code, smlar_2nd = word_code_lst[j], smlar_1st_lst[j], alter_code_lst[j], smlar_2nd_lst[j]
@@ -57,13 +57,17 @@ def print_reconstruction_to_table(path, max_len,  posi_lst, posi_similarity, wor
             posi = ','.join(posi)
             sm_posi = ','.join(sm_posi)
 
-            print(f'word,{word}', file=f)
-            print(f'similarity,{s1}', file=f)
-            print(f'position,{posi}', file=f)
-            print(f'similarity,{sm_posi}', file=f)
-            print(f'alternative,{alter}', file=f)
-            print(f'similarity,{s2}', file=f)
+            if 'word' in output_items:
+                print(f'word,{word}', file=f)
+                print(f'similarity,{s1}', file=f)
 
+            if 'position' in output_items:
+                print(f'position,{posi}', file=f)
+                print(f'similarity,{sm_posi}', file=f)
+
+            if 'alternative' in output_items:
+                print(f'alternative,{alter}', file=f)
+                print(f'similarity,{s2}', file=f)
 
 
 def print_readable_word(path, word_code_lst, monitor, tokenizer):
@@ -75,8 +79,20 @@ def print_readable_word(path, word_code_lst, monitor, tokenizer):
 if __name__ == '__main__':
     output_zero = True
     path = './weights/txbkd_exp0_monitor.pth'
-    save_path_full = './experiments/results/20230901_bert_vanilla/reconstruct_full_exp0.csv'
-    save_path_pre = './experiments/results/20230901_bert_vanilla/reconstruct_pre_exp0.txt'
+    # save_path_full = './experiments/results/20230901_bert_vanilla/reconstruct_full_exp0.csv'
+    # save_path_pre = './experiments/results/20230901_bert_vanilla/reconstruct_pre_exp0.txt'
+
+    # path = './weights/txbkd_exp_smallvo_monitor.pth'
+    # save_path_full = './experiments/results/20230901_bert_vanilla/reconstruct_full_exp_smallvo.csv'
+    # save_path_pre = './experiments/results/20230901_bert_vanilla/reconstruct_pre_exp_smallvo.txt'
+
+    save_path_full = None
+    save_path_pre = None
+    max_len = 24
+    save_path_word = './experiments/results/20230901_bert_vanilla/reconstruct_word_exp0.csv'
+    save_path_position = './experiments/results/20230901_bert_vanilla/reconstruct_position_exp0.csv'
+    save_path_alternative = './experiments/results/20230901_bert_vanilla/reconstruct_alternative_exp0.csv'
+
     skip = True
     print_second = True
     monitor_information = torch.load(path, map_location='cpu')
@@ -94,6 +110,8 @@ if __name__ == '__main__':
     smlar_1st_lst = []
     alter_code_lst = []
     smlar_2nd_lst = []
+
+    delta_bkd_bias_printable, delta_bkd_bias, delta_bkd_estimate_printable, delta_bkd_estimate = monitor.get_backdoor_change()
 
     for j in range(len(monitor.backdoor_indices)):
         bkd_indices = monitor.backdoor_indices[j]
@@ -121,10 +139,22 @@ if __name__ == '__main__':
         print('\n')
 
     if save_path_full is not None:
-        print_reconstruction_to_table(save_path_full, 32, posi_lst, posi_similarity, word_code_lst, smlar_1st_lst, alter_code_lst, smlar_2nd_lst, monitor, tokenizer)
+        print_reconstruction_to_table(save_path_full, max_len, posi_lst, posi_similarity, word_code_lst, smlar_1st_lst, alter_code_lst, smlar_2nd_lst, monitor, tokenizer)
 
     if save_path_pre is not None:
         print_readable_word(save_path_pre, word_code_lst, monitor, tokenizer)
+
+    if save_path_word is not None:
+        print_reconstruction_to_table(save_path_word, max_len, posi_lst, posi_similarity, word_code_lst, smlar_1st_lst,
+                                    alter_code_lst, smlar_2nd_lst, monitor, tokenizer, output_items=['word'])
+
+    if save_path_position is not None:
+        print_reconstruction_to_table(save_path_position, max_len, posi_lst, posi_similarity, word_code_lst, smlar_1st_lst,
+                                    alter_code_lst, smlar_2nd_lst, monitor, tokenizer, output_items=['position'])
+
+    if save_path_alternative is not None:
+        print_reconstruction_to_table(save_path_alternative, max_len, posi_lst, posi_similarity, word_code_lst, smlar_1st_lst,
+                                  alter_code_lst, smlar_2nd_lst, monitor, tokenizer, output_items=['alternative'])
 
 
 

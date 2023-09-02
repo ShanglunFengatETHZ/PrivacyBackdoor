@@ -243,7 +243,97 @@ def dffprv_bkd(draws, labels):
     labels.append(label)
 
 
+def sequence_bkd(draws, labels):
+    nodes_features = generate_node(starting_point=(0.2, 0.45), gap=(0.0, 0.1), number=4)
+    draw, label = plot_node_set(nodes_features, radius=0.02, axes=axes, mode='circle',
+                                plot_param={'fill': True, 'linewidth': 3, 'color': 'cyan'},
+                                label='features')
+    draws.append(draw)
+    labels.append(label)
+
+    nodes_position = generate_node(starting_point=(0.2, 0.35), gap=(0.0, 0.1), number=1)
+    draw, label = plot_node_set(nodes_position, radius=0.02, axes=axes, mode='circle',
+                                plot_param={'fill': True, 'linewidth': 3, 'color': 'blue'},
+                                label='position')
+    draws.append(draw)
+    labels.append(label)
+
+    nodes_signal = generate_node(starting_point=(0.2, 0.25), gap=(0.0, 0.1), number=1)
+    draw, label = plot_node_set(nodes_signal, radius=0.02, axes=axes, mode='circle',
+                                plot_param={'fill': True, 'linewidth': 3, 'color': 'navy'},
+                                label='signals')
+    draws.append(draw)
+    labels.append(label)
+
+    nodes_seq1 = generate_node(starting_point=(0.8, 0.1), gap=(0.0, 0.075), number=3)
+    draw, label = plot_node_set(nodes_seq1, radius=0.02, axes=axes, mode='circle',
+                                plot_param={'fill': True, 'linewidth': 3, 'color': 'orange'},
+                                label='backdoor sequence 1')
+    draws.append(draw)
+    labels.append(label)
+
+    nodes_seq2 = generate_node(starting_point=(0.8, 0.4), gap=(0.0, 0.075), number=3)
+    draw, label = plot_node_set(nodes_seq2, radius=0.02, axes=axes, mode='circle',
+                                plot_param={'fill': True, 'linewidth': 3, 'color': 'red'},
+                                label='backdoor sequence 2')
+    draws.append(draw)
+    labels.append(label)
+
+    nodes_seq3 = generate_node(starting_point=(0.8, 0.7), gap=(0.0, 0.075), number=3)
+    draw, label = plot_node_set(nodes_seq3, radius=0.02, axes=axes, mode='circle',
+                                plot_param={'fill': True, 'linewidth': 3, 'color': 'gold'},
+                                label='backdoor sequence 3')
+    draws.append(draw)
+    labels.append(label)
+
+
+    draw, label = plot_arrow(nodes_features, nodes_seq1, epsilon=0.08, epsilon_end=0.12, mode='fullconnect',
+                             plot_param={'width': 0.005, 'linewidth': 0.5, 'color': 'black', 'fill': False,
+                                         'alpha': 0.5}, axes=axes, label='reconstruct words from')
+    draws.append(draw)
+    labels.append(label)
+
+    plot_arrow(nodes_features, nodes_seq2, epsilon=0.08, epsilon_end=0.12, mode='fullconnect',
+               plot_param={'width': 0.005, 'linewidth': 0.5, 'color': 'black', 'fill': False, 'alpha': 0.5}, axes=axes)
+
+
+    plot_arrow(nodes_features, nodes_seq3, epsilon=0.08, epsilon_end=0.12, mode='fullconnect',
+               plot_param={'width': 0.005, 'linewidth': 0.5, 'color': 'black', 'fill': False, 'alpha': 0.5}, axes=axes)
+
+
+    draw, label = plot_arrow(nodes_position, nodes_seq1, epsilon=0.08, epsilon_end=0.12, mode='fullconnect',
+                             plot_param={'width': 0.005, 'linewidth': 1.0, 'color': 'blue', 'fill': True,
+                                         'alpha': 0.5}, axes=axes, label='position baits')
+    draws.append(draw)
+    labels.append(label)
+
+    plot_arrow(nodes_position, nodes_seq2, epsilon=0.08, epsilon_end=0.12, mode='fullconnect',
+                             plot_param={'width': 0.005, 'linewidth': 1.0, 'color': 'blue', 'fill': True,
+                                         'alpha': 0.5}, axes=axes)
+
+    plot_arrow(nodes_position, nodes_seq3, epsilon=0.08, epsilon_end=0.12, mode='fullconnect',
+                             plot_param={'width': 0.005, 'linewidth': 1.0, 'color': 'blue', 'fill': True,
+                                         'alpha': 0.5}, axes=axes)
+
+    draw, label = plot_arrow(nodes_signal, nodes_seq1, epsilon=0.08, epsilon_end=0.12, mode='fullconnect',
+                             plot_param={'width': 0.005, 'linewidth': 1.0, 'color': 'navy', 'fill': True,
+                                         'alpha': 0.5}, axes=axes, label='signal baits')
+    draws.append(draw)
+    labels.append(label)
+
+    plot_arrow(nodes_signal, nodes_seq2, epsilon=0.08, epsilon_end=0.12, mode='fullconnect',
+               plot_param={'width': 0.005, 'linewidth': 1.0, 'color': 'navy', 'fill': True,
+                           'alpha': 0.5}, axes=axes)
+
+    plot_arrow(nodes_signal, nodes_seq3, epsilon=0.08, epsilon_end=0.12, mode='fullconnect',
+               plot_param={'width': 0.005, 'linewidth': 1.0, 'color': 'navy', 'fill': True,
+                           'alpha': 0.5}, axes=axes)
+
+
+
 if __name__ == '__main__':
+    # fig = plt.figure(figsize=(8, 9))
+
     fig = plt.figure(figsize=(8, 9))
 
     axes = fig.add_axes([0.0, 0.1, 1.0, 0.9])
@@ -275,8 +365,11 @@ if __name__ == '__main__':
 
     dffprv_bkd(draws, labels)
 
+    # sequence_bkd(draws, labels)
+
     plt.legend(draws, labels, bbox_to_anchor=(0.02, -0.15, 0.96, 0.2), ncol=3, mode="expand", borderaxespad=0., handler_map={mpatches.Circle: HandlerEllipse(), mpatches.Rectangle:HandlerRect(), mpatches.FancyArrow:HandlerArrow()})
 
     # plt.savefig('../experiments/pics/twintrack.eps')
-    plt.savefig('../experiments/pics/dp_bkd_vanilla.svg')
+    plt.savefig('../experiments/pics/dp_bkd_vanilla.eps')
+    # plt.savefig('../experiments/pics/sequence_bkd.eps')
     plt.show()

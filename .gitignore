@@ -173,7 +173,7 @@ analysis/debug_zerotracktransformer.py
 analysis/plot_bipolarization.py
 analysis/plot_gelu.py
 analysis/plot_scaling.py
-analysis/plot_twintrackbkd.py
+analysis/plot_mlp.py
 analysis/stat.py
 analysis/stat_shiftdataset.py
 analysis/stat_subimage.py

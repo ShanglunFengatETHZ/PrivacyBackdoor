@@ -289,7 +289,7 @@ def build_dp_model(info_dataset, info_model, info_train, info_target, logger=Non
             wgt_save_path, rgs_save_path = path_decorator(save_path, f'_ex{j}')
             # TODO: check id
             torch.save(classifier.save_weight(), wgt_save_path)
-            torch.save(safe_classifier.backdoor_registrar, rgs_save_path)
+            torch.save(safe_classifier.backdoor_registrar.save_information(), rgs_save_path)
 
 
 if __name__ == '__main__':

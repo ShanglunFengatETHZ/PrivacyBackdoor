@@ -18,11 +18,16 @@ def vit():
 
 
 def bert():
-    epoch = []
-    acc = []
-    plt.plot(epoch, acc, label='training', marker='o', color='purple', markersize=8)
+    epoch = [0, 1, 2, 3, 4, 5, 6, 7, 8]
+    acc_tr = [0.167, 0.321, 0.466, 0.579, 0.668, 0.719, 0.774, 0.799, 0.833]
+    acc_test = [0.167, 0.424, 0.550, 0.630, 0.642, 0.682, 0.790, 0.824, 0.796]
+    plt.plot(epoch, acc_tr, label='train', marker='o', color='purple', markersize=8)
+    plt.plot(epoch, acc_test, label='test', marker='o', color='orange', markersize=8)
+
 
 def training_accuracy_improvement():
+    bert()
+    save_path = '../experiments/results/20230901_bert_vanilla/running_accuacy.eps'
 
     plt.xlabel('Epoch')
     plt.ylabel('Accuracy')
@@ -30,7 +35,7 @@ def training_accuracy_improvement():
     plt.legend(loc='upper left')
     plt.tight_layout()
 
-    # plt.savefig('../pics/running_accuracy.eps')
+    plt.savefig(save_path)
     plt.show()
 
 

@@ -112,26 +112,36 @@ def record_step_info(act_sample, act_bkd_idx, bkd_counter, values_bkd, eps=1e-5)
 
 
 class DiffPrvBackdoorRegistrar:
-    def __init__(self, num_bkd, m_u=None, m_v=None, indices_bkd_u=None, indices_bkd_v=None, target_image_label=None):
+    def __init__(self, num_bkd=None, m_u=None, m_v=None, indices_bkd_u=None, indices_bkd_v=None, target_image_label=None):
         # TODO: many assert to guarantee correctness.
         # TODO: deal with different input dimension of backdoor
         # TODO: how to make sure that u,v, target are one-to-one correspondence
         # TODO: what to do with the coupling of
-        # this should have the ability to generate target_image and target labels.
-        self.num_bkd = num_bkd
-        self.m_u, self.m_v = m_u, m_v
-        assert m_u > num_bkd and m_v > num_bkd,  'the number of features have to be larger than the number of backdoors'
+        # this should have the ability to generate target_image and target labels
+
+        if num_bkd is not None and m_u is not None and m_v is not None:
+            self.num_bkd = num_bkd
+            self.m_u, self.m_v = m_u, m_v
+            assert m_u > num_bkd and m_v > num_bkd,  'the number of features have to be larger than the number of backdoors'
+        else:
+            self.num_bkd = None
+            self.m_u, self.m_v = None, None
+
 
         indices_bkd_u = [indices_bkd_u] if isinstance(indices_bkd_u, int) else indices_bkd_u
         indices_bkd_v = [indices_bkd_v] if isinstance(indices_bkd_v, int) else indices_bkd_v
-        self.indices_bkd_u, self.indices_bkd_v = torch.tensor(indices_bkd_u), torch.tensor(indices_bkd_v)
-        assert isinstance(self.indices_bkd_u, torch.Tensor) and self.indices_bkd_u.dim() == 1, 'the dimension of indices should be 1'
-        assert isinstance(self.indices_bkd_v, torch.Tensor) and self.indices_bkd_v.dim() == 1, 'the dimension of indices should be 1'
-        assert self.num_bkd == len(self.indices_bkd_u) and self.num_bkd == len(self.indices_bkd_v), 'the number of backdoors is not correct'
-        assert torch.logical_and(torch.all(self.indices_bkd_u < m_u), torch.all(self.indices_bkd_u >= 0)), 'the indices out of range'
-        assert torch.logical_and(torch.all(self.indices_bkd_v < m_v), torch.all(self.indices_bkd_v >= 0)), 'the indices out of range'
+        if indices_bkd_u is not None and indices_bkd_v is not None:
+            self.indices_bkd_u, self.indices_bkd_v = torch.tensor(indices_bkd_u), torch.tensor(indices_bkd_v)
+            assert isinstance(self.indices_bkd_u, torch.Tensor) and self.indices_bkd_u.dim() == 1, 'the dimension of indices should be 1'
+            assert isinstance(self.indices_bkd_v, torch.Tensor) and self.indices_bkd_v.dim() == 1, 'the dimension of indices should be 1'
+            assert self.num_bkd == len(self.indices_bkd_u) and self.num_bkd == len(self.indices_bkd_v), 'the number of backdoors is not correct'
+            assert torch.logical_and(torch.all(self.indices_bkd_u < m_u), torch.all(self.indices_bkd_u >= 0)), 'the indices out of range'
+            assert torch.logical_and(torch.all(self.indices_bkd_v < m_v), torch.all(self.indices_bkd_v >= 0)), 'the indices out of range'
 
-        self.indices_others_u, self.indices_others_v = cal_set_difference_seq(m_u, self.indices_bkd_u), cal_set_difference_seq(m_v, self.indices_bkd_v)
+            self.indices_others_u, self.indices_others_v = cal_set_difference_seq(m_u, self.indices_bkd_u), cal_set_difference_seq(m_v, self.indices_bkd_v)
+        else:
+            self.indices_bkd_u, self.indices_bkd_v = None, None
+            self.indices_others_u, self.indices_others_v = None, None
 
         self.u_act_log = []
         self.v_act_log = []
@@ -142,8 +152,26 @@ class DiffPrvBackdoorRegistrar:
         self.epoch = -1
         self.eps = 1e-5
 
-        self.target_images = [target_img_lb[0] for target_img_lb in target_image_label]
-        self.target_labels = [target_img_lb[1] for target_img_lb in target_image_label]
+        if target_image_label is not None:
+            self.target_images = [target_img_lb[0] for target_img_lb in target_image_label]
+            self.target_labels = [target_img_lb[1] for target_img_lb in target_image_label]
+        else:
+            self.target_images = None
+            self.target_labels = None
+
+    def save_information(self):
+        return {
+            'num_bkd': self.num_bkd, 'm_u': self.m_u, 'm_v': self.m_v,
+            'indices_bkd_u': self.indices_bkd_u , 'indices_bkd_v': self.indices_bkd_v, 'indices_others_u': self.indices_others_u, 'indices_others_v': self.indices_others_v,
+            'u_act_log':self.u_act_log, 'v_act_log': self.v_act_log, 'inner_outputs_cache':self.inner_outputs_cache ,'v_cache':self.v_cache, 'bu_bkd_log':self.bu_bkd_log,
+            'epoch':self.epoch, 'eps': self.eps,
+            'target_images':self.target_images , 'target_labels':self.target_labels
+        }
+
+    def load_information(self, info_dict):
+        for key in info_dict.keys():
+            setattr(self, key, info_dict[key])
+
 
     def update_epoch(self, epoch):
         assert epoch - self.epoch == 1, 'wrong update'
