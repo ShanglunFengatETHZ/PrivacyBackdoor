@@ -127,7 +127,6 @@ class DiffPrvBackdoorRegistrar:
             self.num_bkd = None
             self.m_u, self.m_v = None, None
 
-
         indices_bkd_u = [indices_bkd_u] if isinstance(indices_bkd_u, int) else indices_bkd_u
         indices_bkd_v = [indices_bkd_v] if isinstance(indices_bkd_v, int) else indices_bkd_v
         if indices_bkd_u is not None and indices_bkd_v is not None:
@@ -171,7 +170,6 @@ class DiffPrvBackdoorRegistrar:
     def load_information(self, info_dict):
         for key in info_dict.keys():
             setattr(self, key, info_dict[key])
-
 
     def update_epoch(self, epoch):
         assert epoch - self.epoch == 1, 'wrong update'

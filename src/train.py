@@ -151,6 +151,7 @@ def dp_train_by_epoch(model, train_loader, optimizer, privacy_engine, epoch, del
         avg_loss = losses.mean().item()
     if logger is not None:
         logger.info(f"Epoch {epoch} Loss: {avg_loss:.4f} Acc@1: {acc:.4f} (ε = {epsilon:.3f}, δ = {delta})")
+    return acc, epsilon, delta
 
 
 def evaluation(model, test_loader, device, use_inner_output=True):

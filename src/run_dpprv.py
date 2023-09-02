@@ -177,15 +177,24 @@ def build_public_model(info_dataset, info_model, info_train, logger, save_path=N
 
 
 def dp_train(num_epochs, classifier, train_loader, test_loader, optimizer, privacy_engine, delta=1e-5, device='cpu', max_physical_batch_size=64, logger=None):
+    acc_lst = []
+    epsilon_lst = []
+    delta_lst = []
     for epoch in range(num_epochs):
         classifier.backdoor_registrar.update_epoch(epoch)
         if epoch == 0:
             classifier.update_state()
-        dp_train_by_epoch(classifier, train_loader, optimizer, privacy_engine, epoch=epoch, delta=delta, device=device,
+        acc, epsilon, delta = dp_train_by_epoch(classifier, train_loader, optimizer, privacy_engine, epoch=epoch, delta=delta, device=device,
                           max_physical_batch_size=max_physical_batch_size, logger=logger)
+        acc_lst.append(round(acc,3))
+        epsilon_lst.append(round(epsilon,3))
+        delta_lst.append(delta)
 
     test_acc = evaluation(classifier, test_loader, device=device)
     logger.info(f"\tTest set Acc: {test_acc:.4f}")
+    logger.info(f'acc:{acc_lst}')
+    logger.info(f'epsilon:{epsilon_lst}')
+    logger.info(f'delta:{delta_lst}')
 
 
 def build_dp_model(info_dataset, info_model, info_train, info_target, logger=None, save_path=None):
@@ -243,7 +252,7 @@ def build_dp_model(info_dataset, info_model, info_train, info_target, logger=Non
     threshold, passing_threshold = set_threshold(upperlowerbounds, threshold_quantile=threshold_quantile, passing_threshold_quantile=passing_threshold_quantile)
     initialization_information = {'encoder_scaling_module_idx': encoder_scaling_module_idx, 'baits':baits, 'thresholds':threshold,
                                   'passing_threshold': passing_threshold, 'multipliers':multipliers}
-    logger.info(f'upper bounds:{upperlowerbounds[0]}\n lower bounds:{upperlowerbounds[1]}\n threshold:{threshold}\n passing threshold:{passing_threshold}')
+    logger.info(f'upper bounds:{upperlowerbounds[0].item()}\n lower bounds:{upperlowerbounds[1].item()}\n threshold:{threshold.item()}\n passing threshold:{passing_threshold}')
     logger.info(f'multipliers:{multipliers}')
 
     classifier = InitEncoderMLP(encoder=cnn_encoder, mlp_sizes=mlp_sizes, input_size=(3, resolution, resolution),
