@@ -10,7 +10,7 @@ from opacus.utils.batch_memory_manager import BatchMemoryManager
 # TODO: torch.cuda.manual_seed_all(seed_val)
 
 
-def train_model(model, dataloaders, optimizer, num_epochs, device='cpu', verbose=False, logger=None):
+def train_model(model, dataloaders, optimizer, num_epochs, device='cpu', verbose=False, logger=None, is_debug=False):
     # only adjust device in this function
     model = model.to(device)
     loss_func = nn.CrossEntropyLoss()

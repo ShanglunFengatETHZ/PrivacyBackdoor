@@ -211,6 +211,15 @@ def plot_recovery(images, bias=(0.0, 0.0, 0.0), scaling=(1.0, 1.0, 1.0), hw=None
     plt.show()
 
 
+def block_translate(layers, indices_source_blks=None, indices_target_blks=None):
+    assert len(indices_target_blks) == len(indices_source_blks), 'the number of target blocks should be the same as the number of source blocks'
+    m = len(indices_target_blks)
+    weights = [copy.deepcopy(layer.state_dict()) for layer in layers]
+    for j in range(m):
+        idx_tgt, idx_src = indices_target_blks[j], indices_source_blks[j]
+        layers[idx_tgt].load_state_dict(weights[idx_src])
+
+
 def pass_forward(net=None, dataloader=None, return_label=False):
     fts = []
     labels = []

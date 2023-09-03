@@ -8,6 +8,7 @@ import datasets as hgf
 
 
 def load_dataset(root, dataset, is_normalize=False, resize=None, is_augment=False):
+    # TODO: systemize this function
     if dataset == 'cifar100':
         transform_lst = []
         if is_augment:
@@ -125,7 +126,7 @@ def get_dataloader(ds0, batch_size, num_workers, ds1=None):
         return ds0_loader
 
 
-def get_direct_resize_dataset(dataset, start_from=(0,0), target_size=(224, 224), default_values=0.0):
+def get_direct_resize_dataset(dataset, start_from=(0, 0), target_size=(224, 224), default_values=0.0):
     image_lst, label_lst = [], []
     for j in range(len(dataset)):
         image, label = dataset[j]

@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from tools import cal_set_difference_seq, cal_stat_wrtC, indices_period_generator, pass_forward_text
+from tools import cal_set_difference_seq, cal_stat_wrtC, indices_period_generator, pass_forward_text, block_translate
 from transformers import BertTokenizer, AutoConfig, BertForSequenceClassification
 from data import get_dataloader, load_text_dataset
 import copy
@@ -337,15 +337,6 @@ def edit_probe(module, act_indices, wrong_classes, activation_multiplier=1.0):
     module.weight.data[wrong_classes, act_indices] = activation_multiplier
 
 
-def block_translate(layers, indices_source_blks=None, indices_target_blks=None):
-    assert len(indices_target_blks) == len(indices_source_blks), 'the number of target blocks should be the same as the number of source blocks'
-    m = len(indices_target_blks)
-    weights = [copy.deepcopy(layer.state_dict()) for layer in layers]
-    for j in range(m):
-        idx_tgt, idx_src = indices_target_blks[j], indices_source_blks[j]
-        layers[idx_tgt].load_state_dict(weights[idx_src])
-
-
 def bait_mirror_position_generator(position_embedding, posi_start=0, posi_end=48, indices_clean=None, multiplier=1.0, neighbor_balance=(0.0, 1.0), scaling=1.0):
     idx_position = torch.arange(start=posi_start, end=posi_end)
 
@@ -582,11 +573,15 @@ def bert_backdoor_initialization(classifier, dataloader4bait, args_weight, args_
     num_heads = classifier.config.num_attention_heads
     hidden_group_dict = args_weight['HIDDEN_GROUP']
     print(hidden_group_dict)
-    indices_ft = indices_period_generator(hidden_size, num_heads=num_heads, start=hidden_group_dict['features'][0], end=hidden_group_dict['features'][1])
+    indices_ft = indices_period_generator(hidden_size, num_heads=num_heads, start=hidden_group_dict['features'][0],
+                                          end=hidden_group_dict['features'][1])
     indices_occupied = cal_set_difference_seq(hidden_size, indices_ft)
-    indices_ps = indices_period_generator(hidden_size, num_heads=num_heads, start=hidden_group_dict['position'][0], end=hidden_group_dict['position'][1])
-    indices_signal = indices_period_generator(hidden_size, num_heads=num_heads, start=hidden_group_dict['signal'][0], end=hidden_group_dict['signal'][1])
-    indices_bkd = indices_period_generator(hidden_size, num_heads=num_heads, start=hidden_group_dict['backdoor'][0], end=hidden_group_dict['backdoor'][1])
+    indices_ps = indices_period_generator(hidden_size, num_heads=num_heads, start=hidden_group_dict['position'][0],
+                                          end=hidden_group_dict['position'][1])
+    indices_signal = indices_period_generator(hidden_size, num_heads=num_heads, start=hidden_group_dict['signal'][0],
+                                              end=hidden_group_dict['signal'][1])
+    indices_bkd = indices_period_generator(hidden_size, num_heads=num_heads, start=hidden_group_dict['backdoor'][0],
+                                           end=hidden_group_dict['backdoor'][1])
     indices_bkd = indices_bkd[:num_backdoors]
 
     embedding_ln_weight = classifier.bert.embeddings.LayerNorm.weight.detach().clone()
@@ -594,10 +589,12 @@ def bert_backdoor_initialization(classifier, dataloader4bait, args_weight, args_
 
     # embedding
     embedding_dict = args_weight['EMBEDDING']
-    edit_embedding(classifier.bert.embeddings, ft_indices=indices_ft, blank_indices=indices_occupied, multiplier=embedding_dict['emb_multiplier'],
-                   position_clean_multiplier=embedding_dict['pst_multiplier'], position_clean_indices=indices_ps, large_constant_indices=indices_occupied,
+    edit_embedding(classifier.bert.embeddings, ft_indices=indices_ft, blank_indices=indices_occupied,
+                   multiplier=embedding_dict['emb_multiplier'], position_clean_multiplier=embedding_dict['pst_multiplier'],
+                   position_clean_indices=indices_ps, large_constant_indices=indices_occupied,
                    large_constant=embedding_dict['large_constant'], max_len=max_len, mirror_symmetry=True,
-                   ignore_special_notation=True, correlation_bounds=embedding_dict['correlation_bounds'], freeze_grad=embedding_dict['freeze_grad'])
+                   ignore_special_notation=True, correlation_bounds=embedding_dict['correlation_bounds'],
+                   freeze_grad=embedding_dict['freeze_grad'])
 
     # major body
     working_hidden_layers = num_hidden_layers - 3
