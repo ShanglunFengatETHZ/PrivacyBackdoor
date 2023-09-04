@@ -2,46 +2,67 @@ import torch
 import torchvision.datasets as datasets
 import torch.utils.data as data
 import torchvision.transforms as transforms
-from tools import setdiff1d
-from torch.utils.data import TensorDataset, random_split
+from torch.utils.data import TensorDataset
 import datasets as hgf
 
 
-def load_dataset(root, dataset, is_normalize=False, resize=None, is_augment=False):
-    # TODO: systemize this function
-    if dataset == 'cifar100':
-        transform_lst = []
-        if is_augment:
-            transform_lst.append(transforms.RandomHorizontalFlip())
-            transform_lst.append(transforms.RandomRotation(20))
-            transform_lst.append(transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2))
+def load_dataset(root, dataset, is_normalize=False, resize=None, is_augment=False, inlaid=None):
+    transform_lst_train, transform_lst_test = [], []
+    if is_augment:
+        transform_lst_train.append(transforms.RandomHorizontalFlip())
+        transform_lst_train.append(transforms.RandomRotation(20))
+        transform_lst_train.append(transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2))
 
-        transform_lst.append(transforms.ToTensor())
+    if resize is not None:
+        transform_lst_train.append(transforms.Resize(resize))
+        transform_lst_test.append(transforms.Resize(resize))
+
+    transform_lst_train.append(transforms.ToTensor())
+    transform_lst_test.append(transforms.ToTensor())
+
+    if dataset == 'cifar100':
         if is_normalize:
-            transform_lst.append(transforms.Normalize(mean=(0.5071, 0.4867, 0.4408), std=(0.2675, 0.2565, 0.2761)))
-        train_dataset = datasets.CIFAR100(root, train=True, transform=transforms.Compose(transform_lst), download=False)
-        test_dataset = datasets.CIFAR100(root, train=False, transform=transforms.Compose(transform_lst[-2:]), download=False)
-        resolution = 32
+            transform_lst_train.append(transforms.Normalize(mean=(0.5071, 0.4867, 0.4408), std=(0.2675, 0.2565, 0.2761)))
+            transform_lst_test.append(transforms.Normalize(mean=(0.5071, 0.4867, 0.4408), std=(0.2675, 0.2565, 0.2761)))
+        train_dataset = datasets.CIFAR100(root, train=True, transform=transforms.Compose(transform_lst_train), download=False)
+        test_dataset = datasets.CIFAR100(root, train=False, transform=transforms.Compose(transform_lst_test), download=False)
+        original_resolution = 32
         classes = 100
     elif dataset == 'imagenet':
-        train_dataset = datasets.ImageNet(root, split='train', transform=transforms.ToTensor(), download=False)
-        test_dataset = datasets.ImageNet(root, split='val', transform=transforms.ToTensor(), download=False)
-        resolution = 224
+        train_dataset = datasets.ImageNet(root, split='train', transform=transforms.Compose(transform_lst_train), download=False)
+        test_dataset = datasets.ImageNet(root, split='val', transform=transforms.Compose(transform_lst_test), download=False)
+        original_resolution = 224
         classes = 1000
     else:
-        transform_lst = []
-        if resize is not None:
-            transform_lst.append(transforms.Resize(resize))
-        transform_lst.append(transforms.ToTensor())
         if is_normalize:
-            transform_lst.append(transforms.Normalize(mean=(0.4914, 0.4822, 0.4465), std=(0.2023, 0.1994, 0.2010)))
+            transform_lst_train.append(transforms.Normalize(mean=(0.4914, 0.4822, 0.4465), std=(0.2023, 0.1994, 0.2010)))
+            transform_lst_test.append(transforms.Normalize(mean=(0.4914, 0.4822, 0.4465), std=(0.2023, 0.1994, 0.2010)))
 
-        train_dataset = datasets.CIFAR10(root, train=True, transform=transforms.Compose(transform_lst), download=False)
-        test_dataset = datasets.CIFAR10(root, train=False, transform=transforms.Compose(transform_lst), download=False)
-        resolution = 32
+        train_dataset = datasets.CIFAR10(root, train=True, transform=transforms.Compose(transform_lst_train), download=False)
+        test_dataset = datasets.CIFAR10(root, train=False, transform=transforms.Compose(transform_lst_test), download=False)
+        original_resolution = 32
         classes = 10
+    resolution = resize if resize is not None else original_resolution
+
+    if inlaid is not None:
+        train_dataset, target_size = get_direct_resize_dataset(train_dataset, **inlaid)
+        test_dataset, _ = get_direct_resize_dataset(test_dataset, **inlaid)
+        resolution = target_size[0]
 
     return train_dataset, test_dataset, resolution, classes
+
+
+def get_direct_resize_dataset(dataset, start_from=(0, 0), target_size=(224, 224), default_values=0.0):
+    image_lst, label_lst = [], []
+    for j in range(len(dataset)):
+        image, label = dataset[j]
+        large_image = default_values * torch.ones(3, target_size[0], target_size[1])
+        large_image[:, start_from[0]: (start_from[0] + image.shape[1]), start_from[1]: (start_from[1] + image.shape[2])] = image
+        image_lst.append(large_image)
+        label_lst.append(label)
+    large_images = torch.stack(image_lst)
+    labels = torch.tensor(label_lst)
+    return TensorDataset(large_images, labels), target_size
 
 
 def get_sentences_labels_from_dicts(dataset, text_key, label_key):
@@ -101,15 +122,8 @@ def get_subdataset(ds, p=0.5, random_seed=12345678):
         return ds, None
     else:
         assert 0.0 <= p <= 1.0, 'invalid proportion parameter'
-        torch.manual_seed(random_seed)
-        size = len(ds)
-
-        subsize = int(size * p)
-        idxs = torch.multinomial(input=torch.ones(size), num_samples=subsize)  # input of multi-nomial is probability
-        idxs_complement = setdiff1d(size, idxs)
-
-        ds_sub0 = data.Subset(ds, idxs)
-        ds_sub1 = data.Subset(ds, idxs_complement)
+        generator = torch.Generator().manual_seed(random_seed)
+        ds_sub0, ds_sub1 = data.random_split(dataset=ds, lengths=[p, 1.0 - p], generator=generator)
         return ds_sub0, ds_sub1
 
 
@@ -124,17 +138,3 @@ def get_dataloader(ds0, batch_size, num_workers, ds1=None):
         return ds0_loader, ds1_loader
     else:
         return ds0_loader
-
-
-def get_direct_resize_dataset(dataset, start_from=(0, 0), target_size=(224, 224), default_values=0.0):
-    image_lst, label_lst = [], []
-    for j in range(len(dataset)):
-        image, label = dataset[j]
-        canvas = default_values * torch.ones(3, target_size[0], target_size[1])
-        large_image = canvas[:, start_from[0]: (start_from[0] + target_size[0]),
-                      start_from[1]: (start_from[1] + target_size[1])]
-        image_lst.append(large_image)
-        label_lst.append(label)
-    large_images = torch.stack(image_lst)
-    labels = torch.tensor(label_lst)
-    return TensorDataset(large_images, labels)

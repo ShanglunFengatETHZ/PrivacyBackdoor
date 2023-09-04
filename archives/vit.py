@@ -17,7 +17,7 @@ def bait_weight_generator(num_bkd, extracted_pixels, dl_train, dl_bait, bait_sub
 
     tr_imgs_cut, bait_imgs_cut = tr_imgs[:, :, extracted_pixels], bait_imgs[:, :, extracted_pixels]
 
-    color_weight = channel_extraction(channel_preprocess)
+    color_weight = channel_extraction(approach=channel_preprocess)
     color_weight = color_weight.reshape(1, 3, 1)
     tr_imgs_small, bait_imgs_small = torch.sum(tr_imgs_cut * color_weight, dim=1), torch.sum(bait_imgs_cut * color_weight, dim=1)
 

@@ -10,10 +10,9 @@ def build_vision_transformer(info_dataset, info_model, info_train, logger=None, 
     # deal with dataset-related information
     ds_name, ds_path = info_dataset['NAME'], info_dataset['ROOT']
     is_normalize = info_dataset.get('IS_NORMALIZE', True)
-    tr_ds, test_ds, resolution, classes = load_dataset(ds_path, ds_name, is_normalize=is_normalize, resize)
+    tr_ds, test_ds, resolution, classes = load_dataset(ds_path, ds_name, is_normalize=is_normalize) # TODO: dataset informaiton HERE
 
     tr_ds, _ = get_subdataset(tr_ds, p=0.5, random_seed=136)
-    tr_ds, test_ds = get_direct_resize_dataset(tr_ds), get_direct_resize_dataset(test_ds)
     tr_dl, test_dl = get_dataloader(tr_ds, batch_size=64, num_workers=2, ds1=test_ds)
     dataloaders = {'train': tr_dl, 'val': test_dl}
 
