@@ -14,7 +14,7 @@ def channel_extraction(approach='gray'):
     elif approach == 'red':
         color_weight = torch.tensor([1.0, 0.0, 0.0]).reshape(1, 3, 1, 1)
     elif approach == 'yellow':
-        color_weight = torch.tensor([0.0, 0.0, 1.0]).reshape(1, 3, 1, 1)
+        color_weight = torch.tensor([0.0, 1.0, 0.0]).reshape(1, 3, 1, 1)
     elif approach == 'blue':
         color_weight = torch.tensor([0.0, 0.0, 1.0]).reshape(1, 3, 1, 1)
     else:
@@ -58,8 +58,9 @@ def assign_ln(module, indices, weight, bias):
     module.bias.data[indices] = bias
 
 
-def make_extract_pixels(xstart, xend, xstep, ystart, yend, ystep):
-    image0 = torch.zeros(32, 32)
+def make_extract_pixels(xstart, xend, xstep, ystart, yend, ystep, resolution=32):
+    # OUT: two dimension, True / False matrix
+    image0 = torch.zeros(resolution, resolution)
     image0[xstart:xend:xstep, ystart:yend:ystep] = 1.0
     extracted_pixels = (image0 > 0.5)
     return extracted_pixels
@@ -67,25 +68,44 @@ def make_extract_pixels(xstart, xend, xstep, ystart, yend, ystep):
 
 def make_conv_pixel_extractor(extracted_pixels, extract_approach='gray', multiplier=1.0, zero_mean=False):
     height, width = extracted_pixels.shape[0], extracted_pixels.shape[1]
-    num_output = int(torch.sum(extracted_pixels))
+    num_pixels = int(torch.sum(extracted_pixels))
 
-    conv_weight = torch.zeros(num_output, 3, height, width)
+    conv_weight = torch.zeros(num_pixels, 3, height, width)
 
     idx_extracted_pixels = extracted_pixels.nonzero()
-    conv_weight[torch.arange(num_output), :, idx_extracted_pixels[:, 0], idx_extracted_pixels[:, 1]] = 1.0
+    conv_weight[torch.arange(num_pixels), :, idx_extracted_pixels[:, 0], idx_extracted_pixels[:, 1]] = 1.0
     if zero_mean:
-        conv_weight[:, :, idx_extracted_pixels[:, 0], idx_extracted_pixels[:, 1]] -= 1.0 / num_output
+        conv_weight[:, :, idx_extracted_pixels[:, 0], idx_extracted_pixels[:, 1]] -= 1.0 / num_pixels
 
     color_weight = channel_extraction(approach=extract_approach)
     return multiplier * conv_weight * color_weight
 
 
+def edit_conv(module, indices_img, conv_pixel_extractor, indices_zero=None, use_mirror=False):
+    num_entries = len(indices_img)
+    num_pixels = len(conv_pixel_extractor)
+
+    if indices_zero is not None:
+        module.weight.data[indices_zero] = 0.0
+        module.bias.data[indices_zero] = 0.0
+
+    module.bias.data[indices_img] = 0.0
+    if use_mirror:
+        assert num_entries == 2 * num_pixels, f'{num_entries}, {num_pixels}'
+        module.weight.data[indices_img[torch.arange(0, num_entries, 2)]] = conv_pixel_extractor
+        module.weight.data[indices_img[torch.arange(1, num_entries, 2)]] = -1.0 * conv_pixel_extractor
+    else:
+        assert num_entries == num_pixels, f'{num_entries}, {num_pixels}'
+        module.weight.data[indices_img] = conv_pixel_extractor
+
+
 def get_output_conv(dataloader, extracted_pixels, segment_length=32, pixel_multiplier=1.0,
                     channel_extract_approach='gray', output_mirror=False, is_centralize=False):
+    # num_pixels to num_entries
     tr_imgs, tr_labels = dl2tensor(dataloader)
     height, width = tr_imgs.shape[2], tr_imgs.shape[3]
     color_weight = channel_extraction(approach=channel_extract_approach)
-    tr_imgs_d1 = torch.sum(tr_imgs * color_weight, dim=1)
+    tr_imgs_d1 = torch.sum(tr_imgs * color_weight * pixel_multiplier, dim=1)
 
     nh, nw = height // segment_length, width // segment_length
 
@@ -95,17 +115,18 @@ def get_output_conv(dataloader, extracted_pixels, segment_length=32, pixel_multi
         sub_img_lst = []
         for j in range(nh):
             for k in range(nw):
-                sub_img = tr_img_d1[j * segment_length:(j + 1) * segment_length, k * segment_length:(k + 1) * segment_length]
-                sub_img_lst.append(sub_img[extracted_pixels] * pixel_multiplier)
+                sub_img = tr_img_d1[j * segment_length:(j + 1) * segment_length, k * segment_length : (k + 1) * segment_length]
+                sub_img_lst.append(sub_img[extracted_pixels])  # 1d: num_extracted_pixels
 
-        tr_inputs.append(torch.stack(sub_img_lst, dim=0))
-    tr_inputs = torch.stack(tr_inputs,dim=0)
+        tr_inputs.append(torch.stack(sub_img_lst, dim=0))  # 2d: num_subimage * num_extracted_pixels
+    tr_inputs = torch.stack(tr_inputs, dim=0)  # 3d: num_sample * num_subimage * num_extracted_pixels
     assert tr_inputs.dim() == 3, 'should have 3 dimension: sample * sub-images * feature'
+
     if output_mirror:
         tr_inputs_mirror = torch.zeros(tr_inputs.shape[0], tr_inputs.shape[1], tr_inputs[2] * 2)
         num_entries = tr_inputs_mirror.shape[-1]
-        tr_inputs_mirror[:,:, torch.arange(0, num_entries, 2)] = tr_inputs
-        tr_inputs_mirror[:,:, torch.arange(1, num_entries, 2)] = -1.0 * tr_inputs
+        tr_inputs_mirror[:, :, torch.arange(0, num_entries, 2)] = tr_inputs
+        tr_inputs_mirror[:, :, torch.arange(1, num_entries, 2)] = -1.0 * tr_inputs
         outputs = tr_inputs_mirror
     else:
         if is_centralize:
@@ -116,39 +137,24 @@ def get_output_conv(dataloader, extracted_pixels, segment_length=32, pixel_multi
     return outputs, tr_labels
 
 
-def get_input2backdoor(inputs, input_mirror=False, is_centralize=True, noise=None):
-    num_entries = inputs.shape[-1]
+def get_input2backdoor(inputs, input_mirror=False, is_centralize=True, ln_multiplier=1.0, noise=None):
+    assert inputs.dim() == 3, f'{inputs.dim()}'
+    assert inputs.shape[2] == len(noise), f'feature dimension does not match: {inputs.shape[2]}, {len(noise)}'
     if input_mirror:
-        inputs = inputs - inputs.mean(dim=-1, keepdim=True)
+        pass
     else:
         if is_centralize:
             inputs = inputs - inputs.mean(dim=-1, keepdim=True)
-    outputs = inputs + noise
+    outputs = ln_multiplier * inputs + noise.reshape(1, 1, len(noise))
     return outputs
 
 
-def edit_conv(module, indices_img, conv_pixel_extractor, indices_zero=None, use_mirror=False):
-    num_entries = len(indices_img)
-
-    if indices_zero is not None:
-        module.weight.data[indices_zero] = 0.0
-        module.bias.data[indices_zero] = 0.0
-
-    module.bias.data[indices_img] = 0.0
-    if use_mirror:
-        assert len(indices_img) == 2 * len(conv_pixel_extractor)
-        module.weight.data[indices_img[torch.arange(0, len(indices_img), 2)]] = conv_pixel_extractor
-        module.weight.data[indices_img[torch.arange(1, len(indices_img), 2)]] = -1.0 * conv_pixel_extractor
-    else:
-        assert len(indices_img) == len(conv_pixel_extractor), f'{len(indices_img)}, {len(conv_pixel_extractor)}'
-        module.weight.data[indices_img] = conv_pixel_extractor
-
-
 def gaussian_seq_bait_generator(inputs, labels, num_output=500, topk=5, multiplier=1.0,
-                                specific_subimage=None, input_mirror_symmetry=False, is_centralize_bait=True):
-    num_signals = inputs.shape[-1]
+                                specific_subimage=None, is_mirror_symmetry_bait=False, is_centralize_bait=True):
+    # inputs: num_sample * num_subimage * num_extracted_pixels
+    num_sample, num_subimage_per_image, num_signals = inputs.shape[0], inputs.shape[1], inputs.shape[-1]
     weights = torch.zeros(num_output, num_signals)
-    if input_mirror_symmetry:
+    if is_mirror_symmetry_bait:
         weights_raw = torch.randn(num_output, num_signals // 2)
         weights_raw = weights_raw / weights_raw.norm(dim=1, keepdim=True)
         weights[:, torch.arange(0, num_signals, 2)] = multiplier * weights_raw
@@ -161,32 +167,33 @@ def gaussian_seq_bait_generator(inputs, labels, num_output=500, topk=5, multipli
         weights[:] = weights_raw * multiplier
 
     if specific_subimage is None:
-        signals = inputs.reshape(inputs.shape[0] * inputs.shape[1], -1)
+        signals = inputs.reshape(num_sample * num_subimage_per_image, -1) # num_sample * num_subimage,  num_extracted_pixels
 
-        classes = torch.ones(inputs.shape[1], inputs.shape[2], dtype=torch.int)
-        classes = classes * labels.unsqueeze(dim=0)
+        classes = torch.ones(num_sample, num_subimage_per_image, dtype=torch.int)
+        classes = classes * labels.unsqueeze(dim=-1)
         classes = classes.reshape(-1)
     else:
         signals = inputs[:, specific_subimage, :]
         classes = labels
     z = signals @ weights.t()  # num_sub_images * num_output
-    values, indices = z.topk(topk + 1, dim=0)
+    values, indices = z.topk(topk + 1, dim=0) # topk * num_output
 
     if specific_subimage is None:
         willing_fishes = []
         for j in range(num_output):
-            willing_fishes_this_door = []
+            willing_fishes_this_bait = []
             idx_subimages = indices[:-1, j]
-            willing_fishes_this_door.append((idx_subimages[k].item() // inputs.shape[1], idx_subimages[k].item() % inputs.shape[1])
-                                            for k in range(len(idx_subimages)))
-            willing_fishes.append(willing_fishes_this_door)
+            for k in range(len(idx_subimages)):
+                willing_fishes_this_bait.append((idx_subimages[k].item() // num_subimage_per_image, idx_subimages[k].item() % num_subimage_per_image))
+            willing_fishes.append(willing_fishes_this_bait)
     else:
         willing_fishes = []
         for j in range(num_output):
-            willing_fishes_this_door = []
+            willing_fishes_this_bait = []
             idx_subimages = indices[:-1, j]
-            willing_fishes_this_door.append((idx_subimages[k].item(), specific_subimage)  for k in range(len(idx_subimages)))
-            willing_fishes.append(willing_fishes_this_door)
+            for k in range(len(idx_subimages)):
+                willing_fishes_this_bait.append((idx_subimages[k].item(), specific_subimage))
+            willing_fishes.append(willing_fishes_this_bait)  # willing_fishes # [[()]]
 
     possible_classes = [set(classes[indices[:-1, j]].tolist()) for j in range(num_output)]
     return weights, possible_classes, (values[-1, :], values[-2, :], values[0, :]), willing_fishes
@@ -204,17 +211,18 @@ def select_satisfy_condition(weights, quantities, possible_classes, willing_fish
     return weights, quantities, possible_classes_satisfied, willing_fishes_satisfied
 
 
-def select_bait(weights, possible_classes, quantities, willing_fishes, num_output=32, no_intersection=True,
-                no_self_intersection=False, max_multiple=None, min_gap=None, min_lowerbound=None, max_possible_classes=None):
+def select_bait(weights, possible_classes, quantities, willing_fishes, num_output=32,
+                min_gap=None, max_multiple=None, min_lowerbound=None, max_possible_classes=None,
+                no_intersection=True, no_self_intersection=False):
 
-    if max_multiple is not None:
+    if min_gap is not None:
         lowerbound, upperbound, largest = quantities
         gap = upperbound - lowerbound
         is_satisfy = torch.gt(gap, min_gap)
         weights, quantities, possible_classes, willing_fishes = select_satisfy_condition(weights, quantities, possible_classes,
                                                                                          willing_fishes, is_satisfy)
 
-    if min_gap is not None:
+    if max_multiple is not None:
         lowerbound, upperbound, largest = quantities
         multiple = (largest - upperbound) / (upperbound - lowerbound)
         is_satisfy = torch.lt(multiple, max_multiple)
@@ -228,7 +236,7 @@ def select_bait(weights, possible_classes, quantities, willing_fishes, num_outpu
                                                                                          willing_fishes, is_satisfy)
 
     if max_possible_classes is not None:
-        number_possible_classes = torch.tensor([len(possi_classes_this_bait) for possi_classes_this_bait in possible_classes])
+        number_possible_classes = torch.tensor([len(posi_classes_this_bait) for posi_classes_this_bait in possible_classes])
         is_satisfy = torch.le(number_possible_classes, max_possible_classes)
         weights, quantities, possible_classes, willing_fishes = select_satisfy_condition(weights, quantities, possible_classes,
                                                                                          willing_fishes, is_satisfy)
@@ -243,12 +251,11 @@ def select_bait(weights, possible_classes, quantities, willing_fishes, num_outpu
                 fishes_pool = fishes_pool.union(willing_fish_this_bait)
         weights, quantities, possible_classes, willing_fishes = select_satisfy_condition(weights, quantities, possible_classes, willing_fishes, is_satisfy)
 
-
     if no_self_intersection:
         is_satisfy = torch.tensor([False] * len(weights))
         fishes_pool = set([])
         for j in range(len(weights)):
-            willing_fish_this_bait = set(willing_fishes[j].tolist())
+            willing_fish_this_bait = set(willing_fishes[j])
             if len(willing_fish_this_bait.intersection(fishes_pool)) == 0:  # only add no intersection
                 is_satisfy[j] = True
                 fishes_pool = fishes_pool.union(willing_fish_this_bait)
@@ -271,7 +278,8 @@ def get_backdoor_threshold(upperlowerbound, neighbor_balance=(0.2, 0.8), is_rand
 
 
 def edit_backdoor_block(module, indices_ft, indices_bkd, indices_image,
-                        zeta, weight_bait, bias_bait, large_constant=0.0, inner_large_constant=False,
+                        zeta, weight_bait, bias_bait,
+                        large_constant=0.0, inner_large_constant=False,
                         img_noise=None, ft_noise=None, ln_multiplier=1.0):
     m = len(indices_bkd) + len(indices_ft) + len(indices_image)
     m_u = len(indices_bkd) + len(indices_ft)
@@ -282,7 +290,7 @@ def edit_backdoor_block(module, indices_ft, indices_bkd, indices_image,
     if inner_large_constant:
         module.self_attention.out_proj.bias.data[indices_image] = large_constant
 
-    assign_ln(module.ln_2, torch.cat([indices_bkd, indices_ft]), 0., 0.)
+    close_mlp(module)
     assign_ln(module.ln_2, indices_image, ln_multiplier * sigma, ln_multiplier * b_v)
 
     if img_noise is not None:
@@ -290,23 +298,19 @@ def edit_backdoor_block(module, indices_ft, indices_bkd, indices_image,
     if ft_noise is not None:
         module.ln_2.bias.data[indices_ft] += ft_noise
 
-    module.mlp[0].weight.data[:] = 0.
-    module.mlp[0].bias.data[:] = -1e4
-
     for j in range(len(weight_bait)):
         idx = indices_bkd[j]
         module.mlp[0].weight.data[idx, indices_image] = weight_bait[j]
         module.mlp[0].bias.data[idx] = bias_bait[j]
 
-    module.mlp[3].weight.data[:] = 0.
-    module.mlp[3].bias.data[:] = 0.
     module.mlp[3].weight.data[indices_bkd, indices_bkd] = zeta
     if inner_large_constant:
         module.mlp[3].bias.data[indices_image] = -1.0 * large_constant
 
 
-def edit_canceller(module, indices_unrelated, indices_2zero, large_constant,
-                   zoom_in=0.01, zoom_out=None, shift_constant=12.0, inner_large_constant=False, ln_multiplier=1.0):
+def edit_canceller(module, indices_unrelated, indices_2zero,
+                   zoom_in=0.01, zoom_out=None, shift_constant=12.0,  ln_multiplier=1.0,
+                   large_constant=0.0, inner_large_constant=False):
     m = len(indices_unrelated) + len(indices_2zero)
     m_u = len(indices_unrelated)
     assert m == len(module.ln_1.weight)
@@ -317,28 +321,23 @@ def edit_canceller(module, indices_unrelated, indices_2zero, large_constant,
     if inner_large_constant:
         module.self_attention.out_proj.bias.data[indices_2zero] = large_constant
 
-    assign_ln(module.ln_2, indices_unrelated, 0., 0.)
+    close_mlp(module)
     assign_ln(module.ln_2, indices_2zero, ln_multiplier * sigma, ln_multiplier * b_v)
 
-    module.mlp[0].weight.data[:] = 0.
-    module.mlp[0].bias.data[:] = -1e4
     module.mlp[0].weight.data[indices_2zero, indices_2zero] = -1.0 * zoom_in
     module.mlp[0].bias.data[indices_2zero] = shift_constant
     if zoom_out is None:
         zoom_out = 1 / zoom_in
 
-    module.mlp[3].weight.data[:] = 0.
-    module.mlp[3].bias.data[:] = 0.
     module.mlp[3].weight.data[indices_2zero, indices_2zero] = zoom_out
     module.mlp[3].bias.data[indices_2zero] = - shift_constant * zoom_out
-
 
     if inner_large_constant:
         module.mlp[3].bias.data[indices_2zero] -= large_constant
 
 
 def edit_gradient_filter(block, indices_hinder, indices_absorbing, indices_passing,
-                            large_constant=1e5, shift_constant=0.0, is_debug=False, close=False):
+                         large_constant=1e5, shift_constant=0.0, is_debug=False, close=False):
     # move the gradient to indices_hinder to indices_absorbing, and do not affect indices_passing
     m_v_hd, m_v_ab = len(indices_hinder), len(indices_absorbing)
     m_u, m_v = len(indices_passing), m_v_hd + m_v_ab
@@ -374,17 +373,12 @@ def edit_gradient_filter(block, indices_hinder, indices_absorbing, indices_passi
     block.mlp[3].bias.data[indices_absorbing] = - large_constant
 
 
-def edit_direct_passing(block, indices_zero=None, hidden_size=768):
+def edit_direct_passing(block, indices_zero=None):
     if indices_zero is not None:
         block.ln_1.weight.data[indices_zero] = 0.
         block.ln_1.bias.data[indices_zero] = 0.
 
         block.self_attention.in_proj_weight.data[:, indices_zero] = 0.
-        block.self_attention.in_proj_bias.data[indices_zero] = 0.
-        block.self_attention.in_proj_weight.data[:, indices_zero + hidden_size] = 0.
-        block.self_attention.in_proj_bias.data[indices_zero + hidden_size] = 0.
-        block.self_attention.in_proj_weight.data[:, indices_zero + 2 * hidden_size] = 0.
-        block.self_attention.in_proj_bias.data[indices_zero + 2 * hidden_size] = 0.
 
         block.self_attention.out_proj.weight.data[indices_zero, :] = 0.
         block.self_attention.out_proj.bias.data[indices_zero] = 0.
@@ -429,25 +423,24 @@ def edit_last_block(module, indices_ft, indices_bkd, indices_img, large_constant
         module.mlp[3].weight.data[indices_bkd, indices_bkd] = signal_amplifier_out
 
 
-def edit_terminalLN(module, indices_ft, indices_bkd, indices_img, large_constant, multiplier=1.0):
+def edit_terminalLN(module, indices_ft, indices_bkd, indices_img, large_constant, multiplier_ft=1.0, multiplier_bkd=1.0):
     # The last LayerNormalization should always be identitical beucase its function can be applied by heads
     m = len(indices_ft) + len(indices_bkd) + len(indices_img)
     m_u = len(indices_ft) + len(indices_bkd)
     sigma, b_u, b_v = cal_stat_wrtC(m, m_u, large_constant)
-    assign_ln(module, indices_ft, weight=multiplier * sigma, bias=multiplier * b_u)
-    assign_ln(module, indices_bkd, weight=multiplier * sigma, bias=multiplier * b_u)
+    assign_ln(module, indices_ft, weight=multiplier_ft * sigma, bias=multiplier_ft * b_u)
+    assign_ln(module, indices_bkd, weight=multiplier_bkd * sigma, bias=multiplier_bkd * b_u)
     assign_ln(module, indices_img, weight=0.0, bias=0.0)
 
 
 def edit_heads(module, indices_bkd, wrong_classes, multiplier=1.0, indices_ft=None):
     module.weight.data[:, :] = 0.
+    module.bias.data[:] = 0.
 
     if indices_ft is not None:
         module.weight.data[:, indices_ft] = nn.init.xavier_normal_(module.weight[:, indices_ft])
 
     module.weight.data[wrong_classes, indices_bkd[:len(wrong_classes)]] = multiplier
-
-    module.bias.data[:] = 0.
 
 
 class TransformerWrapper(nn.Module):
@@ -520,7 +513,8 @@ class TransformerWrapper(nn.Module):
             indices_detailed = torch.nonzero(signals_before_synthesize[self.indices_bkd] > self.act_thres)  # different parts of an image can activate two parts at the same time
             assert len(indices_detailed) >= len(idx_outlier), f'WRONG SETTING:{len(indices_detailed)}, {len(idx_outlier)}'
             for idx_dt in indices_detailed:
-                self.backdoor_activation_history.append({'image':images_outlier[idx_dt[0]], 'idx_channel':idx_dt[1], 'idx_backdoor':idx_dt[2], 'logit':logits_outlier[idx_dt[0]]})
+                self.backdoor_activation_history.append({'image':images_outlier[idx_dt[0]], 'idx_channel':idx_dt[1],
+                                                         'idx_backdoor':idx_dt[2], 'logit':logits_outlier[idx_dt[0]]})
 
     def module_parameters(self, module='encoder'):
         if module == 'encoder':
@@ -566,9 +560,12 @@ class TransformerWrapper(nn.Module):
         self.outlier_threshold, self.act_thres = args_registrar['outlier_threshold'], args_registrar['act_thres']
 
         print(hidden_group_dict)
-        self.indices_ft = indices_period_generator(768, head=64, start=hidden_group_dict['features'][0], end=hidden_group_dict['features'][1])
-        self.indices_bkd = indices_period_generator(768, head=64, start=hidden_group_dict['backdoors'][0], end=hidden_group_dict['backdoors'][1])
-        self.indices_img = indices_period_generator(768, head=64, start=hidden_group_dict['images'][0], end=hidden_group_dict['images'][1])
+        self.indices_ft = indices_period_generator(768, head=64, start=hidden_group_dict['features'][0],
+                                                   end=hidden_group_dict['features'][1])
+        self.indices_bkd = indices_period_generator(768, head=64, start=hidden_group_dict['backdoors'][0],
+                                                    end=hidden_group_dict['backdoors'][1])
+        self.indices_img = indices_period_generator(768, head=64, start=hidden_group_dict['images'][0],
+                                                    end=hidden_group_dict['images'][1])
 
         self.num_active_bkd = num_backdoors
 
@@ -734,6 +731,7 @@ class TransformerWrapper(nn.Module):
         return relative_delta_weight, relative_delta_bias
 
     def show_weight_bias_change(self, backdoorblock=0):
+        # TODO: show value for comparing with wx+b
         bkd_weight_new = self.model.encoder.layers[backdoorblock].mlp[0].weight[self.indices_bkd]
         bkd_weight_old = self.model0.encoder.layers[backdoorblock].mlp[0].weight[self.indices_bkd]
 

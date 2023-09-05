@@ -78,7 +78,7 @@ if __name__ == '__main__':
         model = TransformerWrapper(model0, model_dict['arch'])
         model.load_information(model_dict)
         extract_information_vit(model, bias=bias, scaling=scaling, hw=args.hw, inches=args.inches,
-                                plot_mode=args.plot_mode, save_path=args.save_path, cut=args.cut)
+                                plot_mode=args.plot_mode, save_path=args.save_path)
     else:
         pass
 

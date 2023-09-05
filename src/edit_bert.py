@@ -415,14 +415,14 @@ def select_satisfy_condition(weights, quantities, possible_classes, willing_fish
 def select_bait(weights, possible_classes, quantities, willing_fishes, num_output=32, no_intersection=True,
                 max_multiple=None, min_gap=None, min_lowerbound=None, max_possible_classes=None):
 
-    if max_multiple is not None:
+    if min_gap is not None:
         lowerbound, upperbound, largest = quantities
         gap = upperbound - lowerbound
         is_satisfy = torch.gt(gap, min_gap)
         weights, quantities, possible_classes, willing_fishes = select_satisfy_condition(weights, quantities, possible_classes,
                                                                                          willing_fishes, is_satisfy)
 
-    if min_gap is not None:
+    if max_multiple is not None:
         lowerbound, upperbound, largest = quantities
         multiple = (largest - upperbound) / (upperbound - lowerbound)
         is_satisfy = torch.lt(multiple, max_multiple)
