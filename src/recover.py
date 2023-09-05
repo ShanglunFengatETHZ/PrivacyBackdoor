@@ -1,6 +1,8 @@
 import argparse
 import torch
 from tools import plot_recovery
+from torchvision.models import vit_b_32
+from edit_vit import TransformerWrapper
 
 
 def parse_args():
@@ -9,17 +11,17 @@ def parse_args():
     parser.add_argument('--hw', nargs='+', type=int, default=None)
     parser.add_argument('--plot_mode', type=str, default='recovery')
     parser.add_argument('--inches', nargs='+', type=float, default=None)
-    parser.add_argument('--bias', nargs='+', type=float, default=(0.0, 0.0, 0.0))
+    parser.add_argument('--bias', nargs='+', type=float, default=(0.0, 0.0, 0.0)) # if data normalize, bias=(0.,0.,0.), scaling=(32.0, 32.0, 32.0); if not, bias=(0.5, 0.5, 0.5) scaling=(16sqrt(2), 16sqrt(2), 16sqrt(2))
     parser.add_argument('--scaling', nargs='+', type=float, default=(1.0, 1.0, 1.0))
     parser.add_argument('--save_path', type=str, default=None)
-    parser.add_argument('--transformer', type=bool, default=False)
+    parser.add_argument('--arch', type=str, choices=['toy', 'vit'])
     parser.add_argument('--cut', type=int, default=16)
 
-    # if data normalize, bias=(0.,0.,0.), scaling=(32.0, 32.0, 32.0); if not, bias=(0.5, 0.5, 0.5) scaling=(16sqrt(2), 16sqrt(2), 16sqrt(2))
     return parser.parse_args()
 
 
-def extract_information(model_path, bias=(0.0, 0.0, 0.0), scaling=(1.0, 1.0, 1.0), hw=None, inches=None, plot_mode='recovery', save_path=None):
+def extract_information_toy(model_path, bias=(0.0, 0.0, 0.0), scaling=(1.0, 1.0, 1.0), hw=None, inches=None,
+                        plot_mode='recovery', save_path=None):
     model = torch.load(model_path)
     model.eval()
     images_ref = model.backdoor._stored_hooked_fishes
@@ -36,19 +38,15 @@ def extract_information(model_path, bias=(0.0, 0.0, 0.0), scaling=(1.0, 1.0, 1.0
         assert False, 'please input the correct plot mode'
 
 
-def extract_transformer_information(model_path, bias=(0.0, 0.0, 0.0), scaling=(1.0, 1.0, 1.0), hw=None, inches=None, plot_mode='recovery', save_path=None, cut=16):
+def extract_information_vit(model_path, bias=(0.0, 0.0, 0.0), scaling=(1.0, 1.0, 1.0), hw=None, inches=None,
+                            plot_mode='recovery', save_path=None):
     model = torch.load(model_path, map_location=torch.device('cpu'))
-    model.eval()
 
-    if plot_mode == 'weights':
-        images = model.show_weight_images()
-        plot_recovery(images, bias=bias, scaling=scaling, hw=hw, inches=inches, save_path=save_path, plot_gray=True)
-    elif plot_mode == 'recovery':
-        images = model.reconstruct_images(h=8, w=16, is_double=True)
+    if plot_mode == 'recovery':
+        images = model.reconstruct_images()
         plot_recovery(images, bias=bias, scaling=scaling, hw=hw, inches=inches, save_path=save_path, plot_gray=True)
     elif plot_mode == 'raw':
-        images = model.registrar.possible_images
-        images = [image[:, 8:(8+cut), 8:(8+cut)] for image in images]
+        images = None
         plot_recovery(images, hw=hw, inches=inches, save_path=save_path, scaling=scaling, bias=bias, plot_gray=False)
     else:
         assert False, 'please input the correct plot mode'
@@ -58,19 +56,30 @@ if __name__ == '__main__':
     # use training dataset for input, use test set for constructing.
     args = parse_args()
 
-    model_path = args.path
-
     use_transformer = args.transformer
-
-    if not use_transformer:
-        bias = tuple(args.bias)
-        print('bias:', args.bias)
-
-        scaling = tuple(args.scaling)
-        print('scaling:', scaling)
-
-        extract_information(model_path, bias=bias, scaling=scaling, hw=args.hw, inches=args.inches, plot_mode=args.plot_mode, save_path=args.save_path)
+    if len(args.bias) == 1:
+        bias = tuple(args.bias * 3)
     else:
-        extract_transformer_information(model_path, bias=args.bias, scaling=args.scaling, hw=args.hw, inches=args.inches, plot_mode=args.plot_mode, save_path=args.save_path, cut=args.cut)
+        bias = tuple(args.bias)
+    print('bias:', args.bias)
+
+    if len(args.scaling) == 1:
+        scaling = tuple(args.scaling * 3)
+    else:
+        scaling = tuple(args.scaling)
+    print('scaling:', scaling)
+
+    if args.arch == 'toy':
+        extract_information_toy(args.path, bias=bias, scaling=scaling, hw=args.hw, inches=args.inches,
+                                plot_mode=args.plot_mode, save_path=args.save_path)
+    elif args.arch == 'vit':
+        model_dict = torch.load(args.path, map_location='cpu')
+        model0 = vit_b_32()
+        model = TransformerWrapper(model0, model_dict['arch'])
+        model.load_information(model_dict)
+        extract_information_vit(model, bias=bias, scaling=scaling, hw=args.hw, inches=args.inches,
+                                plot_mode=args.plot_mode, save_path=args.save_path, cut=args.cut)
+    else:
+        pass
 
 

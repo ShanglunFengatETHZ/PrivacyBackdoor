@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 from opacus.utils.batch_memory_manager import BatchMemoryManager
+from edit_vit import TransformerWrapper
 
 
 # TODO: use the following codes to control the random values
@@ -55,29 +56,27 @@ def train_model(model, dataloaders, optimizer, num_epochs, device='cpu', verbose
                         logger.info(model.backdoor.registrar.print_update_this_step())
                     model.backdoor.store_hooked_fish(inputs)
 
-                if hasattr(model, 'show_perturbation') and verbose and phase == 'train':
+                if isinstance(model, TransformerWrapper) and verbose and phase == 'train':
                     r_delta_wt_conv, r_delta_bs_conv = model.show_perturbation()
-                    print(f'conv delta weight:{r_delta_wt_conv}, conv delta bias:{r_delta_bs_conv}')
-                if hasattr(model, 'show_weight_bias_change') and verbose and phase =='train':
                     wt_change, bs_change = model.show_weight_bias_change()
-                    print(f'bkd delta weight:{wt_change}')
-                    print(f'bkd delta bias:{bs_change}')
+                    if logger is None:
+                        print(f'conv delta weight:{r_delta_wt_conv}, conv delta bias:{r_delta_bs_conv}')
+                        print(f'bkd delta weight:{wt_change}')
+                        print(f'bkd delta bias:{bs_change}')
+                        print(f'number of outliers: {len(model.backdoor_activation_history)}')
+                    else:
+                        logger.info(f'conv delta weight:{r_delta_wt_conv}, conv delta bias:{r_delta_bs_conv}')
+                        logger.info(f'bkd delta weight:{wt_change}')
+                        logger.info(f'bkd delta bias:{bs_change}')
+                        logger.info(f'number of outliers: {len(model.backdoor_activation_history)}')
 
-                if verbose:
-                    print(f'phase:{phase}, max logits:{outputs.max()}, min logits:{outputs.min()}, variance:{outputs.var(dim=0)}')
-                """
-                with torch.no_grad():
-                    if hasattr(model, 'model0'):
-                        outputs_old = model.model0(inputs.double())
-                        print(f'max old logits:{outputs_old.max()}, min old logits:{outputs_old.min()}, old variance:{outputs_old.var(dim=0)}')
-                """
+                if verbose and is_debug:
+                    print(f'phase:{phase}, max logits:{outputs.max()}, min logits:{outputs.min()}, '
+                          f'variance:{outputs.var(dim=0)}')
 
                 # statistics
                 running_loss += loss.item() * inputs.size(0)
                 running_corrects += torch.sum(preds.eq(labels.data))
-
-            if hasattr(model, 'registrar') and hasattr(model.registrar, 'update'):
-                model.registrar.update()
 
             epoch_loss = running_loss / len(dataloaders[phase].dataset)
             epoch_acc = float(running_corrects) / len(dataloaders[phase].dataset)
@@ -96,7 +95,6 @@ def train_model(model, dataloaders, optimizer, num_epochs, device='cpu', verbose
 
 def dp_train_by_epoch(model, train_loader, optimizer, privacy_engine, epoch, delta=1e-5,
                       device='cpu', max_physical_batch_size=128, logger=None, use_inner_output=True):
-    # TODO: keep parameter epoch unchanged?
     # TODO: can this train function use for other DP-parameter combination
     model.train()
     criterion = nn.CrossEntropyLoss()
