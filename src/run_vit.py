@@ -1,7 +1,7 @@
 import torch
 from data import get_subdataset, load_dataset, get_dataloader, get_direct_resize_dataset
 from torchvision.models import vit_b_32, ViT_B_32_Weights
-from edit_vit import TransformerRegistrar, TransformerWrapper, set_hidden_act
+from edit_vit import TransformerWrapper
 from train import train_model
 from torch.optim import SGD
 
@@ -21,13 +21,15 @@ def build_vision_transformer(info_dataset, info_model, info_train, logger=None, 
     model0 = vit_b_32(weights=ViT_B_32_Weights.DEFAULT)
     # TODO: whether to use all model, or backdoor initialization, or semi-actived
 
-    registrar = TransformerRegistrar(100.0)
-    classifier = TransformerWrapper(model0, is_double=True, classes=classes, registrar=registrar, hidden_act=None)
+    classifier = TransformerWrapper(model0, is_double=True, num_classes=classes, hidden_act=None)
     classifier.divide_this_model_vertical(backdoorblock='encoder_layer_0', zerooutblock='encoder_layer_1',
                                           filterblock='encoder_layer_2', synthesizeblocks='encoder_layer_11', encoderblocks=None)
 
-
-    # classifier.backdoor_initialize(dl_train=tr_dl, passing_mode='zero_pass', v_scaling=1.0, is_zero_matmul=False, gap=5.0, zoom=0.04, shift_constant=6.0, constants=constants)
+    args_weights = info_model['WEIGHT_SETTING']
+    args_bait = info_model['BAIT_SETTING']
+    args_registrar = info_model['REGISTRAR']
+    classifier.backdoor_initialize(dataloader4bait=tr_dl, args_weight=args_weights, args_bait=args_bait,
+                                   args_registrar=args_registrar,  num_backdoors=info_model['NUM_BACKDOORS'])
 
     # deal with train-related information
     learning_rate, head_learning_rate = info_train['LR'], info_train['LR_PROBE']

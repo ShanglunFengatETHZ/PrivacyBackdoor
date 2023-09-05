@@ -453,7 +453,6 @@ def edit_heads(module, indices_bkd, wrong_classes, multiplier=1.0, indices_ft=No
 class TransformerWrapper(nn.Module):
     def __init__(self, model, is_double=False, num_classes=10, hidden_act=None):
         super(TransformerWrapper, self).__init__()
-        # TODO: What to do if different part of activate different door?
         self.arch = {'is_double': is_double, 'num_classes': num_classes, 'hidden_act': hidden_act}
         if hidden_act is not None:
             set_hidden_act(model, hidden_act)
@@ -560,10 +559,11 @@ class TransformerWrapper(nn.Module):
         else:
             return self.model.encoder.layers[idx_target]
 
-    def backdoor_initialize(self, dataloader4bait, args_weight, args_bait, args_register=None, num_backdoors=None):
-        # TODO: set threshold for register
+    def backdoor_initialize(self, dataloader4bait, args_weight, args_bait, args_registrar=None, num_backdoors=None):
         classes = set([j for j in range(self.arch['num_classes'])])
         hidden_group_dict = args_weight['HIDDEN_GROUP']
+
+        self.outlier_threshold, self.act_thres = args_registrar['outlier_threshold'], args_registrar['act_thres']
 
         print(hidden_group_dict)
         self.indices_ft = indices_period_generator(768, head=64, start=hidden_group_dict['features'][0], end=hidden_group_dict['features'][1])
