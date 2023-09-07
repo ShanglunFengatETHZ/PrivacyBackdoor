@@ -41,8 +41,41 @@ def build_vision_transformer(info_dataset, info_model, info_train, logger=None, 
                                  logger=logger, is_debug=info_train.get('IS_DEBUG', False),
                                  debug_dict=info_train.get('DEBUG_DICT', None))
 
-    torch.save(new_classifier.save_information(), save_path)
+    if save_path is not None:
+        torch.save(new_classifier.save_information(), save_path)
 
 
 if __name__ == '__main__':
-    build_vision_transformer()
+    info_dataset = {'NAME': 'cifar10',  'ROOT': '../../cifar10', 'IS_NORMALIZE': True, 'RESIZE': None, 'IS_AUGMENT': None,
+                    'INLAID': {'start_from': (0, 0), 'target_size': (224, 224), 'default_values': 0.0}, 'SUBSET': None}
+
+    bait_setting = {
+        'CONSTRUCT': {'topk': 5, 'multiplier': 1.0, 'subimage': None, 'is_mirror': True, 'is_centralize': True, 'neighbor_balance': (0.2, 0.8), 'is_random': False},
+        'SELECTION': {'min_gap': None, 'max_multiple': None, 'min_lowerbound': None, 'max_possible_classes': None, 'no_intersection': True, 'no_self_intersection': False}
+    }
+    weight_setting = {
+        'HIDDEN_GROUP': {'features': (0, 7), 'backdoor': (7, 8), 'images': (8, 12)},
+        'PIXEL': {'xstart': 0, 'xend': 32, 'xstep': 2, 'ystart': 0, 'yend': 32, 'ystep': 2},
+        'CONV': {'conv_img_multiplier': 100.0, 'extract_approach': 'gray', 'use_mirror': False, 'zero_mean': False},
+        'BACKDOOR': {'zeta_multiplier': 25.0, 'large_constant': 5000.0, 'img_noise_approach': 'constant',
+                   'img_noise_multiplier': 1.0, 'ft_noise_multiplier': None, 'ln_multiplier': 1.0},
+        'CANCELLER': {'zoom_in': 1.0, 'zoom_out': 1.0, 'shift_constant': False, 'ln_multiplier': 1.0,
+                    'large_constant': 5000.0},
+        'GRAD_FILTER': {'large_constant': 5000.0, 'shift_constant': 0.0, 'is_close': False},
+        'PASSING': None,
+        'ENDING': {'large_constant': 1000.0, 'signal_amplifier_in': None, 'signal_amplifier_out': None,
+                 'noise_thres': None, 'ln_multiplier_ft': 1.0, 'ln_multiplier_bkd': 1.0},
+        'HEAD': {'multiplier': 1.0}
+    }
+    registrar = {'outlier_threshold':None ,'act_thres':None, 'logit_history_length':0.0}
+
+    info_model = {'PATH': None, 'USE_BACKDOOR_INITIALIZATION': True, 'USE_SEMI_ACTIVE_INITIALIZATION': False,
+                  'ARCH': {'hidden_act': 'ReLU'}, 'NUM_BACKDOORS': 32, 'IS_DOUBLE': False,
+                  'BAIT_SETTING':bait_setting, 'WEIGHT_SETTING': weight_setting,
+                  'REGISTRAR':registrar}
+
+    info_train = { 'BATCH_SIZE': 32, 'LR': 0.0001, 'LR_PROBE': 0.3, 'EPOCHS': 2, 'DEVICE': 'cpu', 'VERBOSE': False,
+                   'IS_DEBUG': False, 'DEBUG_DICT': {'print_period': 20, 'output_logit_stat': False}}
+
+    build_vision_transformer(info_dataset=info_dataset, info_model=info_model, info_train=info_train,
+                             logger=None, save_path=None)

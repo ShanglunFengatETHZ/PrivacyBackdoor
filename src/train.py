@@ -85,6 +85,7 @@ def train_model(model, dataloaders, optimizer, num_epochs, device='cpu', verbose
             logger.info('doors that been activated more than once at a time'+str(model.backdoor.registrar.is_mixture.tolist()))
 """
 
+
 def dp_train_by_epoch(model, train_loader, optimizer, privacy_engine, epoch, delta=1e-5,
                       device='cpu', max_physical_batch_size=128, logger=None, use_inner_output=True):
     # TODO: can this train function use for other DP-parameter combination
