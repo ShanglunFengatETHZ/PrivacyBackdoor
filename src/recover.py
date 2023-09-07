@@ -2,7 +2,7 @@ import argparse
 import torch
 from tools import plot_recovery
 from torchvision.models import vit_b_32
-from edit_vit import TransformerWrapper
+from edit_vit import ViTWrapper
 
 
 def parse_args():
@@ -38,16 +38,14 @@ def extract_information_toy(model_path, bias=(0.0, 0.0, 0.0), scaling=(1.0, 1.0,
         assert False, 'please input the correct plot mode'
 
 
-def extract_information_vit(model_path, bias=(0.0, 0.0, 0.0), scaling=(1.0, 1.0, 1.0), hw=None, inches=None,
+def extract_information_vit(classifier, bias=(0.0, 0.0, 0.0), scaling=(1.0, 1.0, 1.0), hw=None, inches=None,
                             plot_mode='recovery', save_path=None):
-    model = torch.load(model_path, map_location=torch.device('cpu'))
-
     if plot_mode == 'recovery':
-        images = model.reconstruct_images()
-        plot_recovery(images, bias=bias, scaling=scaling, hw=hw, inches=inches, save_path=save_path, plot_gray=True)
+        images = classifier.reconstruct_images()
+        plot_recovery(images, scaling=scaling, bias=bias, hw=hw, inches=inches, save_path=save_path, plot_gray=True)
     elif plot_mode == 'raw':
         images = None
-        plot_recovery(images, hw=hw, inches=inches, save_path=save_path, scaling=scaling, bias=bias, plot_gray=False)
+        plot_recovery(images, scaling=scaling, bias=bias, hw=hw, inches=inches, save_path=save_path,  plot_gray=False)
     else:
         assert False, 'please input the correct plot mode'
 
@@ -56,18 +54,11 @@ if __name__ == '__main__':
     # use training dataset for input, use test set for constructing.
     args = parse_args()
 
-    use_transformer = args.transformer
-    if len(args.bias) == 1:
-        bias = tuple(args.bias * 3)
-    else:
-        bias = tuple(args.bias)
-    print('bias:', args.bias)
+    bias = tuple(args.bias * 3) if len(args.bias) == 1 else tuple(args.bias)
+    print(f'bias:{args.bias}')
 
-    if len(args.scaling) == 1:
-        scaling = tuple(args.scaling * 3)
-    else:
-        scaling = tuple(args.scaling)
-    print('scaling:', scaling)
+    scaling = tuple(args.scaling * 3) if len(args.scaling) == 1 else tuple(args.scaling)
+    print(f'scaling:{args.scaling}')
 
     if args.arch == 'toy':
         extract_information_toy(args.path, bias=bias, scaling=scaling, hw=args.hw, inches=args.inches,
@@ -75,9 +66,9 @@ if __name__ == '__main__':
     elif args.arch == 'vit':
         model_dict = torch.load(args.path, map_location='cpu')
         model0 = vit_b_32()
-        model = TransformerWrapper(model0, model_dict['arch'])
-        model.load_information(model_dict)
-        extract_information_vit(model, bias=bias, scaling=scaling, hw=args.hw, inches=args.inches,
+        classifier = ViTWrapper(model0, **model_dict['arch'])
+        classifier.load_information(model_dict)
+        extract_information_vit(classifier, bias=bias, scaling=scaling, hw=args.hw, inches=args.inches,
                                 plot_mode=args.plot_mode, save_path=args.save_path)
     else:
         pass

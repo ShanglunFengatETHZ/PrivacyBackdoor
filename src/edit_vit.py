@@ -1,12 +1,10 @@
 import torch
-from torchvision.models import vit_b_32, ViT_B_32_Weights
 from tools import dl2tensor, cal_stat_wrtC, indices_period_generator, block_translate
 import torch.nn as nn
-import math
-from data import get_subdataset, load_dataset, get_dataloader
 import copy
 import random
-
+from data import get_subdataset, load_dataset, get_dataloader # use for debugging
+from torchvision.models import vit_b_32, ViT_B_32_Weights
 
 def channel_extraction(approach='gray'):
     if approach == 'gray':
@@ -277,10 +275,8 @@ def get_backdoor_threshold(upperlowerbound, neighbor_balance=(0.2, 0.8), is_rand
     return threshold
 
 
-def edit_backdoor_block(module, indices_ft, indices_bkd, indices_image,
-                        zeta, weight_bait, bias_bait,
-                        large_constant=0.0, inner_large_constant=False,
-                        img_noise=None, ft_noise=None, ln_multiplier=1.0):
+def edit_backdoor_block(module, indices_ft, indices_bkd, indices_image, zeta, weight_bait, bias_bait,
+                        large_constant=0.0, inner_large_constant=False, img_noise=None, ft_noise=None, ln_multiplier=1.0):
     m = len(indices_bkd) + len(indices_ft) + len(indices_image)
     m_u = len(indices_bkd) + len(indices_ft)
     assert m == len(module.ln_1.weight)
@@ -443,10 +439,28 @@ def edit_heads(module, indices_bkd, wrong_classes, multiplier=1.0, indices_ft=No
     module.weight.data[wrong_classes, indices_bkd[:len(wrong_classes)]] = multiplier
 
 
-class TransformerWrapper(nn.Module):
-    def __init__(self, model, is_double=False, num_classes=10, hidden_act=None):
-        super(TransformerWrapper, self).__init__()
-        self.arch = {'is_double': is_double, 'num_classes': num_classes, 'hidden_act': hidden_act}
+def _preprocess(model, x):
+    n, c, h, w = x.shape
+    p = model.patch_size
+    torch._assert(h == model.image_size, f"Wrong image height! Expected {model.image_size} but got {h}!")
+    torch._assert(w == model.image_size, f"Wrong image width! Expected {model.image_size} but got {w}!")
+    n_h = h // p
+    n_w = w // p
+    x = model.conv_proj(x)
+    x = x.reshape(n, model.hidden_dim, n_h * n_w)
+    x = x.permute(0, 2, 1)
+    n = x.shape[0]
+    # Expand the class token to the full batch
+    batch_class_token = model.class_token.expand(n, -1, -1)
+    x = torch.cat([batch_class_token, x], dim=1)
+    return x
+
+
+class ViTWrapper(nn.Module):
+    def __init__(self, model, num_classes=10, hidden_act=None):
+        # TODO: use model.hidden_dim, model.patch_size, model.seq_length
+        super(ViTWrapper, self).__init__()
+        self.arch = {'num_classes': num_classes, 'hidden_act': hidden_act}
         if hidden_act is not None:
             set_hidden_act(model, hidden_act)
         model.heads = nn.Linear(model.heads.head.in_features, num_classes)
@@ -454,43 +468,26 @@ class TransformerWrapper(nn.Module):
         self.model0 = None
         self.model = model
 
-        self.indices_ft, self.indices_bkd, self.indices_img = None, None, None
-        self.noise, self.bait_scaling, self.num_active_bkd, self.pixel_dict, self.use_mirror = None, None, None, None, False
-        self.outlier_threshold, self.act_thres, self.backdoor_activation_history, self.logit_history = None, None, [], []
+        self.indices_ft, self.indices_bkd, self.indices_img = None, None, None  # divide
+        self.noise, self.num_active_bkd, self.pixel_dict, self.use_mirror = None, None, None, False # reconstruction
+        self.backdoor_ln_multiplier, self.conv_img_multiplier = 1.0, 1.0
+        self.outlier_threshold, self.act_thres, self.backdoor_activation_history, self.logit_history, self.logit_history_length = None, None, [], [], 0  # registrar
 
     def forward(self, images):
-        if self.arch['is_double']:
-            images = images.double()
-
+        images = images.to(self.model.class_token.dtype)
         logits = self.model(images)
-        self.registrar.register(images, logits)
+        self._register(images, logits)
         return logits
 
-    def _preprocess(self, model, x):
-        n, c, h, w = x.shape
-        p = self.patch_size
-        torch._assert(h == self.image_size, f"Wrong image height! Expected {self.image_size} but got {h}!")
-        torch._assert(w == self.image_size, f"Wrong image width! Expected {self.image_size} but got {w}!")
-        n_h = h // p
-        n_w = w // p
-        x = model.conv_proj(x)
-        x = x.reshape(n, self.hidden_dim, n_h * n_w)
-        x = x.permute(0, 2, 1)
-        n = x.shape[0]
-        # Expand the class token to the full batch
-        batch_class_token = model.class_token.expand(n, -1, -1)
-        x = torch.cat([batch_class_token, x], dim=1)
-        return x
-
     def output_intermediate(self, images, to=0, use_model0=False):
-        if self.arch['is_double']:
-            images = images.double()
         if use_model0:
             model = self.model0
         else:
             model = self.model
+
+        images = images.to(device=model.class_token.dtype, dtype=model.class_token.dtype)
         with torch.no_grad():
-            x = self._preprocess(model, images)
+            x = _preprocess(model, images)
             if to < 0:
                 x = x
             elif to > 12:
@@ -503,18 +500,19 @@ class TransformerWrapper(nn.Module):
         images = images.detach().clone()
         logits = logits.detach().clone()
 
-        self.logit_history.append(logits)
-        idx_outlier = torch.gt(logits.max(dim=1).values > self.outlier_threshold)
+        if len(self.logit_history) <= self.logit_history_length:
+            self.logit_history.append(logits)
+        idx_outlier = torch.gt(logits.max(dim=1).values, self.outlier_threshold)
         images_outlier = images[idx_outlier]  # dimension is four,size=(0,3,224,224) or size=(N, 3, 224, 224)
         logits_outlier = logits[idx_outlier]
 
         if len(idx_outlier) > 0:
-            signals_before_synthesize = self.output_intermediate(images_outlier, to=11)
-            indices_detailed = torch.nonzero(signals_before_synthesize[self.indices_bkd] > self.act_thres)  # different parts of an image can activate two parts at the same time
+            signals_before_synthesize = self.output_intermediate(images_outlier, to=11) # num_outliers, num_channels, num_features
+            indices_detailed = torch.nonzero(torch.gt(signals_before_synthesize[:, :, self.indices_bkd], self.act_thres))  # different parts of an image can activate two parts at the same time
             assert len(indices_detailed) >= len(idx_outlier), f'WRONG SETTING:{len(indices_detailed)}, {len(idx_outlier)}'
             for idx_dt in indices_detailed:
-                self.backdoor_activation_history.append({'image':images_outlier[idx_dt[0]], 'idx_channel':idx_dt[1],
-                                                         'idx_backdoor':idx_dt[2], 'logit':logits_outlier[idx_dt[0]]})
+                self.backdoor_activation_history.append({'image': images_outlier[idx_dt[0]], 'idx_channel':idx_dt[1],
+                                                         'idx_backdoor': idx_dt[2], 'logit': logits_outlier[idx_dt[0]]})
 
     def module_parameters(self, module='encoder'):
         if module == 'encoder':
@@ -522,6 +520,12 @@ class TransformerWrapper(nn.Module):
             return encoder_params
         elif module == 'heads':
             return self.model.heads.parameters()
+
+    def get_submodule(self, idx_target, use_model0=False):
+        if use_model0:
+            return self.model0.encoder.layers[idx_target]
+        else:
+            return self.model.encoder.layers[idx_target]
 
     def save_information(self):
         return {
@@ -532,11 +536,14 @@ class TransformerWrapper(nn.Module):
             'indices_bkd': self.indices_bkd,
             'indices_img': self.indices_img,
             'noise': self.noise,
-            'bait_scaling': self.bait_scaling,
             'num_active_bkd': self.num_active_bkd,
             'pixel_dict': self.pixel_dict,
             'use_mirror': self.use_mirror,
+            'backdoor_ln_multiplier': self.backdoor_ln_multiplier,
+            'conv_img_multiplier': self.conv_img_multiplier,
+            'outlier_threshold': self.outlier_threshold,
             'backdoor_activation_history': self.backdoor_activation_history,
+            'logit_history_length': self.logit_history_length,
             'logit_history': self.logit_history
         }
 
@@ -547,17 +554,14 @@ class TransformerWrapper(nn.Module):
             elif key in ['model, model0']:
                 getattr(self, key).load_state_dict(information_dict[key])
 
-    def get_submodule(self, idx_target, use_model0=False):
-        if use_model0:
-            return self.model0.encoder.layers[idx_target]
-        else:
-            return self.model.encoder.layers[idx_target]
-
-    def backdoor_initialize(self, dataloader4bait, args_weight, args_bait, args_registrar=None, num_backdoors=None):
+    def backdoor_initialize(self, dataloader4bait, args_weight, args_bait, args_registrar=None, num_backdoors=None,
+                            is_double=False):
         classes = set([j for j in range(self.arch['num_classes'])])
         hidden_group_dict = args_weight['HIDDEN_GROUP']
 
-        self.outlier_threshold, self.act_thres = args_registrar['outlier_threshold'], args_registrar['act_thres']
+        self.outlier_threshold, self.act_thres, self.logit_history_length = args_registrar['outlier_threshold'], \
+                                                                            args_registrar['act_thres'], \
+                                                                            args_registrar['logit_history_length']
 
         print(hidden_group_dict)
         self.indices_ft = indices_period_generator(768, head=64, start=hidden_group_dict['features'][0],
@@ -574,17 +578,17 @@ class TransformerWrapper(nn.Module):
         self.model.class_token.data[:, :, self.indices_img] = 0.
 
         pixel_dict = args_weight['PIXEL']
+        extracted_pixels = make_extract_pixels(**pixel_dict, resolution=self.model.patch_size)
         self.pixel_dict = pixel_dict
-        extracted_pixels = make_extract_pixels(**pixel_dict)
 
         conv_dict = args_weight['CONV']
-        self.conv_img_scaling = conv_dict['conv_img_multiplier']
-        conv_weight = make_conv_pixel_extractor(extracted_pixels=extracted_pixels, extract_approach=conv_dict['extract_approach'],
-                                                multiplier=self.conv_img_scaling, zero_mean=conv_dict['zero_mean'])
-        use_mirror = conv_dict['use_mirror']
-        self.use_mirror = use_mirror
-        edit_conv(self.model.conv_proj, indices_img=self.indices_img, conv_pixel_extractor=conv_weight,
-                  indices_zero=self.indices_bkd, use_mirror=use_mirror)
+        self.conv_img_multiplier = conv_dict['conv_img_multiplier']
+        conv_pixel_extractor = make_conv_pixel_extractor(extracted_pixels=extracted_pixels, extract_approach=conv_dict['extract_approach'],
+                                                         multiplier=self.conv_img_multiplier, zero_mean=conv_dict['zero_mean'])
+
+        self.use_mirror = conv_dict['use_mirror']
+        edit_conv(self.model.conv_proj, indices_img=self.indices_img, conv_pixel_extractor=conv_pixel_extractor,
+                  indices_zero=self.indices_bkd, use_mirror=self.use_mirror)
 
         # major body: deal with layers
         indices_target_blks = [3, 4, 5, 6, 7, 8, 9, 10]
@@ -594,39 +598,40 @@ class TransformerWrapper(nn.Module):
 
         # deal_with_bait
         backdoor_dict = args_weight['BACKDOOR']
-        inputs, labels = get_output_conv(dataloader4bait, extracted_pixels=extracted_pixels, segment_length=32,
-                                         pixel_multiplier=self.conv_img_scaling,
-                                         channel_extract_approach=conv_dict['extract_approach'], output_mirror=use_mirror,
-                                         is_centralize=conv_dict['zero_mean'])
+        inputs, labels = get_output_conv(dataloader4bait, extracted_pixels=extracted_pixels, segment_length=self.model.patch_size,
+                                         pixel_multiplier=self.conv_img_multiplier, channel_extract_approach=conv_dict['extract_approach'],
+                                         output_mirror=self.use_mirror, is_centralize=conv_dict['zero_mean'])
 
         img_noise_approach, img_noise_multiplier = backdoor_dict['img_noise_approach'], backdoor_dict['img_noise_multiplier']
         ft_noise_multiplier = backdoor_dict.get('ft_noise_multiplier', None)
         if ft_noise_multiplier is not None:
-            ft_noise = ft_noise_multiplier * torch.ones(self.indices_ft)
+            ft_noise = ft_noise_multiplier * torch.ones_like(self.indices_ft)
         else:
             ft_noise = None
         if img_noise_approach == 'constant':
-            img_noise = torch.ones(len(self.indices_img)) * img_noise_multiplier
+            img_noise = img_noise_multiplier * torch.ones_like(self.indices_img)
         elif img_noise_approach == 'mirror_constant':
-            img_noise = img_noise_multiplier * torch.ones(len(self.indices_img))
-            img_noise[torch.arange(1,len(img_noise),2)] = -1.0 * img_noise_multiplier
+            img_noise = img_noise_multiplier * torch.ones_like(self.indices_img)
+            img_noise[torch.arange(1, len(img_noise), 2)] = -1.0 * img_noise_multiplier
         elif img_noise_approach == 'gaussian':
-            img_noise = torch.randn(len(self.indices_img)) * img_noise_multiplier
+            img_noise = img_noise_multiplier * torch.randn_like(self.indices_img)
         elif img_noise_approach == 'mirror_gaussian':
-            img_noise = torch.randn(len(self.indices_img)) * img_noise_multiplier
-            img_noise[torch.arange(1, len(img_noise), 2)] = - 1.0 * img_noise[torch.arange(0,len(img_noise),2)]
+            img_noise = img_noise_multiplier * torch.randn_like(self.indices_img)
+            img_noise[torch.arange(1, len(img_noise), 2)] = - 1.0 * img_noise[torch.arange(0, len(img_noise), 2)]
         else:
             assert False, f'invalid image noise approach {img_noise_approach}'
         self.noise = img_noise
 
-        input2backdoor = get_input2backdoor(inputs, input_mirror=use_mirror, is_centralize=True, noise=self.noise)
+        input2backdoor = get_input2backdoor(inputs, input_mirror=self.use_mirror, is_centralize=True,
+                                            ln_multiplier=backdoor_dict['ln_multiplier'], noise=self.noise)
+        self.backdoor_ln_multiplier = backdoor_dict['ln_multiplier']
 
         construct_dict = args_bait['CONSTRUCT']
         selection_dict = args_bait['SELECTION']
-        bait, possible_classes, quantity, willing_fishes = gaussian_seq_bait_generator(
-            inputs=input2backdoor, labels=labels, num_output=100 * num_backdoors, topk=construct_dict['topk'],
-            multiplier=construct_dict['multiplier'], specific_subimage=construct_dict.get('subimage', None),
-            input_mirror_symmetry=use_mirror, is_centralize_bait=construct_dict['is_centralize'])
+        bait, possible_classes, quantity, willing_fishes = gaussian_seq_bait_generator(inputs=input2backdoor, labels=labels,
+                                                                                       num_output=100 * num_backdoors, topk=construct_dict['topk'],
+                                                                                       multiplier=construct_dict['multiplier'], specific_subimage=construct_dict.get('subimage', None),
+                                                                                       is_mirror_symmetry_bait=construct_dict['is_mirror'], is_centralize_bait=construct_dict['is_centralize'])
 
         bait, possible_classes, quantity, willing_fishes = select_bait(weights=bait, possible_classes=possible_classes,
                                                                        quantities=quantity, willing_fishes=willing_fishes,
@@ -639,53 +644,52 @@ class TransformerWrapper(nn.Module):
         print(f'maximum - threshold:{quantity[2] - threshold}')
 
         edit_backdoor_block(layers[0], indices_ft=self.indices_ft, indices_bkd=self.indices_bkd,
-                            indices_image=self.indices_img,  zeta=backdoor_dict['multiplier'], weight_bait=bait,
+                            indices_image=self.indices_img,  zeta=backdoor_dict['zeta_multiplier'], weight_bait=bait,
                             bias_bait=-1.0 * threshold, large_constant=backdoor_dict['large_constant'],
-                            inner_large_constant=True, img_noise=self.noise, ft_noise=ft_noise)
+                            inner_large_constant=True, img_noise=self.noise, ft_noise=ft_noise,
+                            ln_multiplier=self.backdoor_ln_multiplier)
 
         canceller_dict = args_weight['CANCELLER']
-        edit_canceller(layers[1], indices_unrelated=torch.cat([self.indices_ft, self.indices_bkd]),
-                       indices_2zero=self.indices_img, large_constant=canceller_dict['large_constant'], zoom=canceller_dict['zoom'],
-                       shift_constant=canceller_dict['shift_constant'], inner_large_constant=True)
+        edit_canceller(layers[1], indices_unrelated=torch.cat([self.indices_ft, self.indices_bkd]), indices_2zero=self.indices_img,
+                       zoom_in=canceller_dict['zoom_in'], zoom_out=canceller_dict['zoom_out'], shift_constant=canceller_dict['shift_constant'],
+                       ln_multiplier=canceller_dict['ln_multiplier'], inner_large_constant=True, large_constant=canceller_dict['large_constant'], )
 
         grad_filter_dict = args_weight['GRAD_FILTER']
         edit_gradient_filter(layers[2], indices_hinder=self.indices_img, indices_absorbing=self.indices_ft,
                              indices_passing=self.indices_bkd, large_constant=grad_filter_dict['large_constant'],
-                             shift_constant=grad_filter_dict['shift_constant'],is_debug=False)
+                             shift_constant=grad_filter_dict['shift_constant'], is_debug=False, close=grad_filter_dict['is_close'])
 
         # edit passing layers
         for idx in indices_target_blks:
-            edit_direct_passing(layers[idx], indices_zero=torch.cat([self.indices_img, self.indices_bkd]), hidden_size=768)
+            edit_direct_passing(layers[idx], indices_zero=torch.cat([self.indices_img, self.indices_bkd]))
 
         # edit endding layers
         ending_dict = args_weight['ENDING']
-        layers[-2].mlp[3].bias.data[self.indices_img] = ending_dict['large_constant'] # the only large constant used by last block and last layer normalization
-        edit_last_block(getattr(layers, self.synthesizeblocks), indices_ft=self.indices_ft, indices_bkd=self.indices_bkd,
-                        indices_img=self.indices_img, large_constant=ending_dict['large_constant'], v_scaling=1.0)
+        layers[-2].mlp[3].bias.data[self.indices_img] += ending_dict['large_constant'] # the only large constant used by last block and last layer normalization
+        edit_last_block(layers[11], indices_ft=self.indices_ft, indices_bkd=self.indices_bkd, indices_img=self.indices_img,
+                        large_constant=ending_dict['large_constant'], signal_amplifier_in=ending_dict.get('signal_amplifier_in', None),
+                        signal_amplifier_out=ending_dict.get('signal_amplifier_out', None), noise_thres=ending_dict['noise_thres'])
 
         edit_terminalLN(self.model.encoder.ln, indices_ft=self.indices_ft, indices_bkd=self.indices_bkd,
-                        indices_img=self.indices_img, large_constant=ending_dict['large_constant'])
+                        indices_img=self.indices_img, large_constant=ending_dict['large_constant'], multiplier_ft=ending_dict['ln_multiplier_ft'],
+                        multiplier_bkd=ending_dict['ln_multiplier_bkd'])
 
         # edit head
         head_dict = args_weight['HEAD']
         wrong_classes = [random.choice(list(classes.difference(ps_this_bkd))) for ps_this_bkd in possible_classes]
         edit_heads(self.model.heads, indices_bkd=self.indices_bkd, wrong_classes=wrong_classes,
                    multiplier=head_dict['multiplier'], indices_ft=self.indices_ft)
-        if self.arch['is_double']:
-            self.model.double()
+
+        if is_double:
+            self.model = self.model.double()
         self.model0 = copy.deepcopy(self.model)
 
     def semi_activate_initialize(self):
         pass
 
-    def reconstruct_images(self, backdoorblock=0):
+    def reconstruct_images(self, backdoorblock=0, only_active=True):
         h = (self.pixel_dict['xend'] - self.pixel_dict['xstart']) // self.pixel_dict['xstep']
         w = (self.pixel_dict['yend'] - self.pixel_dict['ystart']) // self.pixel_dict['ystep']
-        if h is None:
-            h = int(math.sqrt(len(self.indices_img)))
-        if w is None:
-            w = int(math.sqrt(len(self.indices_img)))
-        # assert h * w == len(self.indices_img), 'the width and height of an images is not correct'
 
         bkd_weight_new = self.model.encoder.layers[backdoorblock].mlp[0].weight[self.indices_bkd].detach()
         bkd_weight_old = self.model0.encoder.layers[backdoorblock].mlp[0].weight[self.indices_bkd].detach()
@@ -698,7 +702,9 @@ class TransformerWrapper(nn.Module):
 
         img_lst = []
 
-        for j in range(len(self.indices_bkd)):
+        num_reconstruct = self.num_active_bkd if only_active else len(self.indices_bkd)
+
+        for j in range(num_reconstruct):
             if self.use_mirror:
                 delta_wt = delta_weight[j, self.indices_img[torch.arange(0, len(self.indices_img), 2)]]
             else:
@@ -709,7 +715,7 @@ class TransformerWrapper(nn.Module):
                 img = torch.zeros(h, w)
             else:
                 img_dirty = delta_wt / delta_bs
-                img_clean = (img_dirty - self.noise) / self.conv_img_scaling
+                img_clean = (img_dirty - self.noise) / (self.conv_img_multiplier * self.backdoor_ln_multiplier)
                 img = img_clean.reshape(h, w)
             img_lst.append(img)
 
@@ -718,7 +724,7 @@ class TransformerWrapper(nn.Module):
     def show_possible_images(self):
         pass
 
-    def show_perturbation(self):
+    def show_conv_perturbation(self):
         weight_img_new, weight_img_old = self.model.conv_proj.weight[self.indices_img], self.model0.conv_proj.weight[self.indices_img]
         bias_img_new, bias_img_old = self.model.conv_proj.bias[self.indices_img], self.model0.conv_proj.bias[self.indices_img]
 
@@ -726,12 +732,10 @@ class TransformerWrapper(nn.Module):
         delta_bias_img = bias_img_new - bias_img_old
 
         relative_delta_weight = torch.norm(delta_weight_img) / torch.norm(weight_img_old)
-        relative_delta_bias = torch.norm(delta_bias_img) / torch.norm(bias_img_old)
 
-        return relative_delta_weight, relative_delta_bias
+        return relative_delta_weight.item(), weight_img_old.norm().item(), delta_bias_img.norm().item()
 
-    def show_weight_bias_change(self, backdoorblock=0):
-        # TODO: show value for comparing with wx+b
+    def show_backdoor_change(self, backdoorblock=0, is_printable=True):
         bkd_weight_new = self.model.encoder.layers[backdoorblock].mlp[0].weight[self.indices_bkd]
         bkd_weight_old = self.model0.encoder.layers[backdoorblock].mlp[0].weight[self.indices_bkd]
 
@@ -739,8 +743,14 @@ class TransformerWrapper(nn.Module):
         bkd_bias_old = self.model0.encoder.layers[backdoorblock].mlp[0].bias[self.indices_bkd]
 
         delta_wt, delta_bs = torch.norm(bkd_weight_new - bkd_weight_old, dim=1), bkd_bias_new - bkd_bias_old
+        delta_estimate = delta_wt ** 2 / (delta_bs + 1e-12)
 
-        return delta_wt[:self.num_active_bkd].tolist(), delta_bs[:self.num_active_bkd].tolist()
+        if is_printable:
+            delta_bias_print = ['{:.2e}'.format(delta_bs_this_door.item()) for delta_bs_this_door in delta_bs]
+            delta_estimate_print = ['{:.2e}'.format(delta_estimate_this_door.item()) for delta_estimate_this_door in delta_estimate]
+            return delta_estimate_print, delta_bias_print
+        else:
+            return delta_estimate, delta_bs
 
 
 if __name__ == '__main__':

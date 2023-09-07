@@ -1,7 +1,7 @@
 import torch
 from data import get_subdataset, load_dataset, get_dataloader
 from torchvision.models import vit_b_32, ViT_B_32_Weights
-from edit_transformer import TransformerRegistrar, TransformerWrapper, indices_period_generator
+from edit_transformer import TransformerRegistrar, ViTWrapper, indices_period_generator
 import torch.nn as nn
 import numpy as np
 import matplotlib.pyplot as plt
@@ -16,7 +16,7 @@ def build_classifier(classes):
     model0 = vit_b_32(weights=ViT_B_32_Weights.DEFAULT)
     registrar = TransformerRegistrar(30.0)
 
-    classifier = TransformerWrapper(model0, is_double=True, classes=classes, registrar=registrar)
+    classifier = ViTWrapper(model0, is_double=True, classes=classes, registrar=registrar)
     classifier.divide_this_model_horizon(indices_ft=indices_ft, indices_bkd=indices_bkd, indices_img=indices_images)
 
     encoderblocks = ['encoder_layer_' + str(j) for j in range(1, 11)]

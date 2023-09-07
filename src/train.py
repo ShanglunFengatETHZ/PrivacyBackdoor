@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 from opacus.utils.batch_memory_manager import BatchMemoryManager
-from edit_vit import TransformerWrapper
+from edit_vit import ViTWrapper
 
 
 # TODO: use the following codes to control the random values
@@ -11,14 +11,15 @@ from edit_vit import TransformerWrapper
 # TODO: torch.cuda.manual_seed_all(seed_val)
 
 
-def train_model(model, dataloaders, optimizer, num_epochs, device='cpu', verbose=False, logger=None, is_debug=False):
+def train_model(model, dataloaders, optimizer, num_epochs, device='cpu', verbose=False, logger=None,
+                is_debug=False, debug_dict=None):
     # only adjust device in this function
     model = model.to(device)
     loss_func = nn.CrossEntropyLoss()
+    print_log = print if logger is None else logger.info
 
     for epoch in range(num_epochs):
-        if logger is not None:
-            logger.info('Epoch {}'.format(epoch))
+        print_log('Epoch {}'.format(epoch))
 
         for phase in ['train', 'val']:  # Each epoch has a training and validation phase
             if phase == 'train':
@@ -32,8 +33,6 @@ def train_model(model, dataloaders, optimizer, num_epochs, device='cpu', verbose
 
             # Iterate over data.
             for i, this_batch in enumerate(dataloader):
-                if verbose:
-                    print(f'batch {i}')
                 inputs, labels = this_batch
 
                 inputs = inputs.to(device)
@@ -51,28 +50,19 @@ def train_model(model, dataloaders, optimizer, num_epochs, device='cpu', verbose
                         loss.backward()
                         optimizer.step()
 
-                if hasattr(model, 'backdoor') and logger is not None and phase == 'train':
-                    if verbose:
-                        logger.info(model.backdoor.registrar.print_update_this_step())
-                    model.backdoor.store_hooked_fish(inputs)
+                print_period = debug_dict.get('print_period', 1)
+                if isinstance(model, ViTWrapper) and is_debug and phase == 'train' and i % print_period == 0:
+                    print_log(f'Epoch:{epoch}, Step:{i}')
+                    r_delta_wt_conv, delta_wt_conv, r_delta_bs_conv = model.show_conv_perturbation()
+                    delta_estimate, delta_bias = model.show_backdoor_change(is_printable=True)
 
-                if isinstance(model, TransformerWrapper) and verbose and phase == 'train':
-                    r_delta_wt_conv, r_delta_bs_conv = model.show_perturbation()
-                    wt_change, bs_change = model.show_weight_bias_change()
-                    if logger is None:
-                        print(f'conv delta weight:{r_delta_wt_conv}, conv delta bias:{r_delta_bs_conv}')
-                        print(f'bkd delta weight:{wt_change}')
-                        print(f'bkd delta bias:{bs_change}')
-                        print(f'number of outliers: {len(model.backdoor_activation_history)}')
-                    else:
-                        logger.info(f'conv delta weight:{r_delta_wt_conv}, conv delta bias:{r_delta_bs_conv}')
-                        logger.info(f'bkd delta weight:{wt_change}')
-                        logger.info(f'bkd delta bias:{bs_change}')
-                        logger.info(f'number of outliers: {len(model.backdoor_activation_history)}')
+                    print_log(f'conv relative delta weight:{r_delta_wt_conv}, conv delta weight:{delta_wt_conv}, conv delta bias:{r_delta_bs_conv}')
+                    print_log(f'bkd delta weight:{delta_estimate}')
+                    print_log(f'bkd delta bias:{delta_bias}')
+                    print_log(f'number of outliers: {len(model.backdoor_activation_history)}')
 
-                if verbose and is_debug:
-                    print(f'phase:{phase}, max logits:{outputs.max()}, min logits:{outputs.min()}, '
-                          f'variance:{outputs.var(dim=0)}')
+                if is_debug and debug_dict.get('output_logit_stat', False):
+                    print_log(f'step:{i}, phase:{phase}, max logits:{outputs.max()}, min logits:{outputs.min()}, variance:{outputs.var(dim=0)}')
 
                 # statistics
                 running_loss += loss.item() * inputs.size(0)
@@ -80,18 +70,20 @@ def train_model(model, dataloaders, optimizer, num_epochs, device='cpu', verbose
 
             epoch_loss = running_loss / len(dataloaders[phase].dataset)
             epoch_acc = float(running_corrects) / len(dataloaders[phase].dataset)
-            if logger is not None:
-                logger.info('{} Loss: {:.4f} Acc: {:.4f}'.format(phase, epoch_loss, epoch_acc))
-            else:
-                print('{} Loss: {:.4f} Acc: {:.4f}'.format(phase, epoch_loss, epoch_acc))
 
-            if hasattr(model, 'backdoor') and logger is not None:
-                if model.backdoor.registrar.is_log:
-                    logger.info('activation times for each door'+str(model.backdoor.registrar.valid_activate_freq.tolist()))
-                    logger.info('doors that been activated more than once at a time'+str(model.backdoor.registrar.is_mixture.tolist()))
-
+            print_log('Epoch:{} PhaseL:{} Loss: {:.4f} Acc: {:.4f}'.format(epoch, phase, epoch_loss, epoch_acc))
     return model.to('cpu')
 
+"""
+    if hasattr(model, 'backdoor') and phase == 'train' and i % print_period == 0:
+        if verbose:
+            logger.info(model.backdoor.registrar.print_update_this_step())
+                model.backdoor.store_hooked_fish(inputs)
+     if hasattr(model, 'backdoor') and logger is not None:
+        if model.backdoor.registrar.is_log:
+            logger.info('activation times for each door'+str(model.backdoor.registrar.valid_activate_freq.tolist()))
+            logger.info('doors that been activated more than once at a time'+str(model.backdoor.registrar.is_mixture.tolist()))
+"""
 
 def dp_train_by_epoch(model, train_loader, optimizer, privacy_engine, epoch, delta=1e-5,
                       device='cpu', max_physical_batch_size=128, logger=None, use_inner_output=True):
@@ -125,7 +117,7 @@ def dp_train_by_epoch(model, train_loader, optimizer, privacy_engine, epoch, del
 
             _, preds = torch.max(output, 1)
             # measure accuracy and record loss
-            is_correct = (preds == target)
+            is_correct = torch.eq(preds, target)
 
             losses.append(loss.item())
             is_correct_lst.append(is_correct)
@@ -168,7 +160,7 @@ def evaluation(model, test_loader, device, use_inner_output=True):
 
             _, preds = torch.max(outputs, 1)
 
-            is_correct = (preds == labels)
+            is_correct = torch.eq(preds, labels)
             is_correct_lst.append(is_correct)
 
     is_correct_all = torch.cat(is_correct_lst)
@@ -241,7 +233,7 @@ def text_train(model, train_dataloader, optimizer, device='cpu',
 
         total_train_loss += loss.item()
         _, preds = torch.max(logits, 1)
-        is_correct = (preds == labels)
+        is_correct = torch.eq(preds, labels)
         is_correct_lst.append(is_correct)
 
         loss.backward()
@@ -271,7 +263,7 @@ def text_evaluation(model, evaluation_dataloader, device='cpu'):
 
         total_eval_loss += loss.item()
         _, preds = torch.max(logits, 1)
-        is_correct = (preds == labels)
+        is_correct = torch.eq(preds, labels)
         is_correct_lst.append(is_correct)
 
     avg_val_loss = total_eval_loss / len(evaluation_dataloader)
