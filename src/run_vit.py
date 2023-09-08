@@ -35,11 +35,10 @@ def build_vision_transformer(info_dataset, info_model, info_train, logger=None, 
     else:
         pass
     optimizer = SGD([{'params': classifier.module_parameters('encoder'), 'lr': info_train['LR']},
-                     {'params': classifier.module_parameters('head'), 'lr': info_train['LR_PROBE']}])
+                     {'params': classifier.module_parameters('heads'), 'lr': info_train['LR_PROBE']}])
 
     new_classifier = train_model(classifier, dataloaders=dataloaders, optimizer=optimizer, num_epochs=info_train['EPOCHS'],
-                                 device=info_train.get('DEVICE', 'cpu'), verbose=info_train.get('VERBOSE', False),
-                                 logger=logger, is_debug=info_train.get('IS_DEBUG', False),
+                                 device=info_train.get('DEVICE', 'cpu'),  logger=logger, is_debug=info_train.get('IS_DEBUG', False),
                                  debug_dict=info_train.get('DEBUG_DICT', None))
 
     if save_path is not None:
@@ -47,11 +46,11 @@ def build_vision_transformer(info_dataset, info_model, info_train, logger=None, 
 
 
 if __name__ == '__main__':
-    info_dataset = {'NAME': 'cifar10',  'ROOT': '../../cifar10', 'IS_NORMALIZE': True, 'RESIZE': None, 'IS_AUGMENT': None,
-                    'INLAID': {'start_from': (0, 0), 'target_size': (224, 224), 'default_values': 0.0}, 'SUBSET': None}
+    info_dataset = {'NAME': 'cifar10',  'ROOT': '../../cifar10', 'IS_NORMALIZE': True, 'RESIZE': None, 'IS_AUGMENT':False ,
+                    'INLAID': {'start_from': (0, 0), 'target_size': (224, 224), 'default_values': 0.0}, 'SUBSET': 0.1}
 
     bait_setting = {
-        'CONSTRUCT': {'topk': 5, 'multiplier': 1.0, 'subimage': None, 'is_mirror': True, 'is_centralize': True, 'neighbor_balance': (0.2, 0.8), 'is_random': False},
+        'CONSTRUCT': {'topk': 10, 'multiplier': 1.0, 'subimage': None, 'is_mirror': True, 'is_centralize': True, 'neighbor_balance': (0.2, 0.8), 'is_random': False},
         'SELECTION': {'min_gap': None, 'max_multiple': None, 'min_lowerbound': None, 'max_possible_classes': None, 'no_intersection': True, 'no_self_intersection': False}
     }
     weight_setting = {
@@ -75,7 +74,7 @@ if __name__ == '__main__':
                   'BAIT_SETTING':bait_setting, 'WEIGHT_SETTING': weight_setting,
                   'REGISTRAR':registrar}
 
-    info_train = { 'BATCH_SIZE': 128, 'LR': 0.0001, 'LR_PROBE': 0.3, 'EPOCHS': 2, 'DEVICE': 'cpu', 'VERBOSE': False,
+    info_train = {'BATCH_SIZE': 128, 'LR': 0.0001, 'LR_PROBE': 0.3, 'EPOCHS': 2, 'DEVICE': 'cpu', 'VERBOSE': False,
                    'IS_DEBUG': False, 'DEBUG_DICT': {'print_period': 20, 'output_logit_stat': False}}
 
     build_vision_transformer(info_dataset=info_dataset, info_model=info_model, info_train=info_train,

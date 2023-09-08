@@ -519,7 +519,7 @@ class ViTWrapper(nn.Module):
             set_hidden_act(model, hidden_act)
         model.heads = nn.Linear(model.heads.head.in_features, num_classes)
 
-        self.model0 = None
+        self.model0 = copy.deepcopy(model)
         self.model = model
 
         self.indices_ft, self.indices_bkd, self.indices_img = None, None, None  # divide
@@ -566,17 +566,19 @@ class ViTWrapper(nn.Module):
 
         if len(self.logit_history) <= self.logit_history_length:
             self.logit_history.append(logits)
-        idx_outlier = torch.gt(logits.max(dim=1).values, self.outlier_threshold)
-        images_outlier = images[idx_outlier]  # dimension is four,size=(0,3,224,224) or size=(N, 3, 224, 224)
-        logits_outlier = logits[idx_outlier]
 
-        if len(idx_outlier) > 0:
-            signals_before_synthesize = self.output_intermediate(images_outlier, to=11) # num_outliers, num_channels, num_features
-            indices_detailed = torch.nonzero(torch.gt(signals_before_synthesize[:, :, self.indices_bkd], self.act_thres))  # different parts of an image can activate two parts at the same time
-            assert len(indices_detailed) >= len(idx_outlier), f'WRONG SETTING:{len(indices_detailed)}, {len(idx_outlier)}'
-            for idx_dt in indices_detailed:
-                self.backdoor_activation_history.append({'image': images_outlier[idx_dt[0]], 'idx_channel':idx_dt[1],
-                                                         'idx_backdoor': idx_dt[2], 'logit': logits_outlier[idx_dt[0]]})
+        if self.outlier_threshold is not None and self.act_thres is not None:
+            idx_outlier = torch.gt(logits.max(dim=1).values, self.outlier_threshold)
+            images_outlier = images[idx_outlier]  # dimension is four,size=(0,3,224,224) or size=(N, 3, 224, 224)
+            logits_outlier = logits[idx_outlier]
+
+            if len(idx_outlier) > 0:
+                signals_before_synthesize = self.output_intermediate(images_outlier, to=11)  # num_outliers, num_channels, num_features
+                indices_detailed = torch.nonzero(torch.gt(signals_before_synthesize[:, :, self.indices_bkd], self.act_thres))  # different parts of an image can activate two parts at the same time
+                assert len(indices_detailed) >= len(idx_outlier), f'WRONG SETTING:{len(indices_detailed)}, {len(idx_outlier)}'
+                for idx_dt in indices_detailed:
+                    self.backdoor_activation_history.append({'image': images_outlier[idx_dt[0]], 'idx_channel':idx_dt[1],
+                                                            'idx_backdoor': idx_dt[2], 'logit': logits_outlier[idx_dt[0]]})
 
     def module_parameters(self, module='encoder'):
         if module == 'encoder':
@@ -847,7 +849,7 @@ def _debug_centralize_conv():
 
 
 if __name__ == '__main__':
-    start_from_scratch = True
+    start_from_scratch = False
     num_backdoors = 32
     is_double = False
     to = -1
@@ -874,7 +876,7 @@ if __name__ == '__main__':
         weight_setting = {
             'HIDDEN_GROUP': {'features': (0, 7), 'backdoors': (7, 8), 'images': (8, 12)},
             'PIXEL': {'xstart': 0, 'xend': 32, 'xstep': 2, 'ystart': 0, 'yend': 32, 'ystep': 2},
-            'CONV': {'conv_img_multiplier': 5.0, 'extract_approach': 'gray', 'use_mirror': False, 'zero_mean': True},
+            'CONV': {'conv_img_multiplier': 5.2, 'extract_approach': 'gray', 'use_mirror': False, 'zero_mean': True},
             'BACKDOOR': {'zeta_multiplier': 10.0, 'large_constant': 5000.0, 'img_noise_approach': 'constant',
                          'img_noise_multiplier': 3.0, 'ft_noise_multiplier': 3.1, 'ln_multiplier': 5.0},
             'CANCELLER': {'zoom_in': 1.0, 'zoom_out': 10.0, 'shift_constant': 2.0, 'ln_multiplier': 0.1,
@@ -887,8 +889,8 @@ if __name__ == '__main__':
         }
 
         bait_setting = {
-            'CONSTRUCT': {'topk': 10, 'multiplier': 0.3, 'subimage': None, 'is_mirror': False,
-                          'is_centralize': True, 'neighbor_balance': (0.2, 0.8), 'is_random': False, 'num_trials':500},
+            'CONSTRUCT': {'topk': 10, 'multiplier': 0.3, 'subimage': 0, 'is_mirror': False,
+                          'is_centralize': True, 'neighbor_balance': (0.2, 0.8), 'is_random': False, 'num_trials': 500},
             'SELECTION': {'min_gap': None, 'max_multiple': None, 'min_lowerbound': None,
                           'max_possible_classes': None, 'no_intersection': True,
                           'no_self_intersection': False}
@@ -899,7 +901,7 @@ if __name__ == '__main__':
         print('Initialize Successfully')
 
     else:
-        info_path = './weights/abc.pth'
+        info_path = './weights/vit_test.pth'
         classifier.load_information(torch.load(info_path, map_location='cpu'))
 
     indices_ft = indices_period_generator(num_features=768, head=64, start=0, end=7)

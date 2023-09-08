@@ -11,7 +11,7 @@ from edit_vit import ViTWrapper
 # TODO: torch.cuda.manual_seed_all(seed_val)
 
 
-def train_model(model, dataloaders, optimizer, num_epochs, device='cpu', verbose=False, logger=None,
+def train_model(model, dataloaders, optimizer, num_epochs, device='cpu', logger=None,
                 is_debug=False, debug_dict=None):
     # only adjust device in this function
     model = model.to(device)
