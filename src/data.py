@@ -19,7 +19,7 @@ def load_dataset(root, dataset, is_normalize=False, resize=None, is_augment=Fals
 
     transform_lst_train.append(transforms.ToTensor())
     transform_lst_test.append(transforms.ToTensor())
-
+    inlaid_resolution = None
     if dataset == 'cifar100':
         if is_normalize:
             transform_lst_train.append(transforms.Normalize(mean=(0.5071, 0.4867, 0.4408), std=(0.2675, 0.2565, 0.2761)))
@@ -38,31 +38,36 @@ def load_dataset(root, dataset, is_normalize=False, resize=None, is_augment=Fals
             transform_lst_train.append(transforms.Normalize(mean=(0.4914, 0.4822, 0.4465), std=(0.2023, 0.1994, 0.2010)))
             transform_lst_test.append(transforms.Normalize(mean=(0.4914, 0.4822, 0.4465), std=(0.2023, 0.1994, 0.2010)))
 
+        if inlaid is not None:
+            transform_lst_train.append(DirectInlaid(**inlaid))
+            transform_lst_test.append(DirectInlaid(**inlaid))
+            inlaid_resolution = inlaid.get('target_size', (224, 224))[0]
+
         train_dataset = datasets.CIFAR10(root, train=True, transform=transforms.Compose(transform_lst_train), download=False)
         test_dataset = datasets.CIFAR10(root, train=False, transform=transforms.Compose(transform_lst_test), download=False)
         original_resolution = 32
         classes = 10
-    resolution = resize if resize is not None else original_resolution
 
-    if inlaid is not None:
-        train_dataset, target_size = get_direct_resize_dataset(train_dataset, **inlaid)
-        test_dataset, _ = get_direct_resize_dataset(test_dataset, **inlaid)
-        resolution = target_size[0]
+    if inlaid_resolution is not None:
+        resolution = inlaid_resolution
+    elif resize is not None:
+        resolution = resize
+    else:
+        resolution = original_resolution
 
     return train_dataset, test_dataset, resolution, classes
 
 
-def get_direct_resize_dataset(dataset, start_from=(0, 0), target_size=(224, 224), default_values=0.0):
-    image_lst, label_lst = [], []
-    for j in range(len(dataset)):
-        image, label = dataset[j]
-        large_image = default_values * torch.ones(3, target_size[0], target_size[1])
-        large_image[:, start_from[0]: (start_from[0] + image.shape[1]), start_from[1]: (start_from[1] + image.shape[2])] = image
-        image_lst.append(large_image)
-        label_lst.append(label)
-    large_images = torch.stack(image_lst)
-    labels = torch.tensor(label_lst)
-    return TensorDataset(large_images, labels), target_size
+class DirectInlaid(object):
+    def __init__(self, start_from=(0, 0), target_size=(224, 224), default_values=0.0):
+        self.start_from = start_from
+        self.target_size = target_size
+        self.default_values = default_values
+
+    def __call__(self, img):
+        large_image = self.default_values * torch.ones(3, self.target_size[0], self.target_size[1])
+        large_image[:, self.start_from[0]: (self.start_from[0] + img.shape[1]), self.start_from[1]: (self.start_from[1] + img.shape[2])] = img
+        return large_image
 
 
 def get_sentences_labels_from_dicts(dataset, text_key, label_key):
@@ -127,9 +132,9 @@ def get_subdataset(ds, p=0.5, random_seed=12345678):
         return ds_sub0, ds_sub1
 
 
-def get_dataloader(ds0, batch_size, num_workers, ds1=None):
+def get_dataloader(ds0, batch_size, num_workers, ds1=None, shuffle=False):
     # return one or two dataloaders
-    ds0_loader = data.DataLoader(dataset=ds0, batch_size=batch_size, shuffle=True,
+    ds0_loader = data.DataLoader(dataset=ds0, batch_size=batch_size, shuffle=shuffle,
                                  pin_memory=True, num_workers=num_workers)
 
     if ds1 is not None:

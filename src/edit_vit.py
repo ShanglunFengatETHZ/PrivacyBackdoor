@@ -1,10 +1,10 @@
 import torch
-from tools import dl2tensor, cal_stat_wrtC, indices_period_generator, block_translate
+from tools import cal_stat_wrtC, indices_period_generator, block_translate
 import torch.nn as nn
-import copy
 import random
 from data import get_subdataset, load_dataset, get_dataloader # use for debugging
 from torchvision.models import vit_b_32, ViT_B_32_Weights
+import copy
 
 def channel_extraction(approach='gray'):
     if approach == 'gray':
@@ -97,10 +97,10 @@ def edit_conv(module, indices_img, conv_pixel_extractor, indices_zero=None, use_
         module.weight.data[indices_img] = conv_pixel_extractor
 
 
-def get_output_conv(dataloader, extracted_pixels, segment_length=32, pixel_multiplier=1.0,
+def get_output_conv(inputs2model, extracted_pixels, segment_length=32, pixel_multiplier=1.0,
                     channel_extract_approach='gray', output_mirror=False, is_centralize=False):
     # num_pixels to num_entries
-    tr_imgs, tr_labels = dl2tensor(dataloader)
+    tr_imgs, tr_labels = inputs2model
     height, width = tr_imgs.shape[2], tr_imgs.shape[3]
     color_weight = channel_extraction(approach=channel_extract_approach)
     tr_imgs_d1 = torch.sum(tr_imgs * color_weight * pixel_multiplier, dim=1)
@@ -147,10 +147,8 @@ def get_input2backdoor(inputs, input_mirror=False, is_centralize=True, ln_multip
     return outputs
 
 
-def gaussian_seq_bait_generator(inputs, labels, num_output=500, topk=5, multiplier=1.0,
-                                specific_subimage=None, is_mirror_symmetry_bait=False, is_centralize_bait=True):
-    # inputs: num_sample * num_subimage * num_extracted_pixels
-    num_sample, num_subimage_per_image, num_signals = inputs.shape[0], inputs.shape[1], inputs.shape[-1]
+def gaussian_seq_bait_generator(num_signals=256, num_output=500,  multiplier=1.0, is_mirror_symmetry_bait=False,
+                                is_centralize_bait=True):
     weights = torch.zeros(num_output, num_signals)
     if is_mirror_symmetry_bait:
         weights_raw = torch.randn(num_output, num_signals // 2)
@@ -163,38 +161,94 @@ def gaussian_seq_bait_generator(inputs, labels, num_output=500, topk=5, multipli
             weights = weights - weights.mean(dim=-1, keepdim=True)
         weights_raw = weights_raw / weights_raw.norm(dim=1, keepdim=True)
         weights[:] = weights_raw * multiplier
+    return weights
 
-    if specific_subimage is None:
-        signals = inputs.reshape(num_sample * num_subimage_per_image, -1) # num_sample * num_subimage,  num_extracted_pixels
 
-        classes = torch.ones(num_sample, num_subimage_per_image, dtype=torch.int)
-        classes = classes * labels.unsqueeze(dim=-1)
-        classes = classes.reshape(-1)
-    else:
-        signals = inputs[:, specific_subimage, :]
-        classes = labels
-    z = signals @ weights.t()  # num_sub_images * num_output
-    values, indices = z.topk(topk + 1, dim=0) # topk * num_output
+def first_make_bait_information_slow(dataloader4bait, weights, process_fn, topk=5, specific_subimage=None):
+    # inputs: num_sample * num_subimage * num_extracted_pixels
+    num_output = len(weights)
+    possible_classes, willing_fishes, values_all = [], [], []
 
-    if specific_subimage is None:
-        willing_fishes = []
-        for j in range(num_output):
-            willing_fishes_this_bait = []
-            idx_subimages = indices[:-1, j]
-            for k in range(len(idx_subimages)):
-                willing_fishes_this_bait.append((idx_subimages[k].item() // num_subimage_per_image, idx_subimages[k].item() % num_subimage_per_image))
-            willing_fishes.append(willing_fishes_this_bait)
-    else:
-        willing_fishes = []
-        for j in range(num_output):
-            willing_fishes_this_bait = []
-            idx_subimages = indices[:-1, j]
-            for k in range(len(idx_subimages)):
+    for j in range(num_output):
+        this_bait = weights[j]
+        z_lst, classes_lst = [], []
+        for X, y in dataloader4bait:
+            inputs, labels = process_fn(X, y)
+            num_sample, num_subimage_per_image = inputs.shape[0], inputs.shape[1]
+            if specific_subimage is None:
+                signals = inputs.reshape(num_sample * num_subimage_per_image, -1) # num_sample * num_subimage,  num_extracted_pixels
+
+                classes = torch.ones(num_sample, num_subimage_per_image, dtype=torch.int)
+                classes = classes * labels.unsqueeze(dim=-1)
+                classes = classes.reshape(-1)
+            else:
+                signals = inputs[:, specific_subimage, :]
+                classes = labels
+
+            z = signals @ this_bait  # num_sub_images * num_output
+            z_lst.append(z)
+            classes_lst.append(classes)
+
+        zz = torch.cat(z_lst)
+        classes_all = torch.cat(classes_lst)
+
+        values, indices = zz.topk(topk + 1)  # topk * num_output
+        possible_classes.append(set(classes_all[indices[:-1]].tolist()))
+
+        idx_subimages = indices[:-1]
+        willing_fishes_this_bait = []
+        for k in range(len(idx_subimages)):
+            if specific_subimage is None:
+                willing_fishes_this_bait.append((idx_subimages[k].item() // num_subimage_per_image,
+                                                 idx_subimages[k].item() % num_subimage_per_image))
+            else:
                 willing_fishes_this_bait.append((idx_subimages[k].item(), specific_subimage))
-            willing_fishes.append(willing_fishes_this_bait)  # willing_fishes # [[()]]
+        willing_fishes.append(willing_fishes_this_bait)
+        values_all.append([values[-1].item(), values[-2].item(), values[0].item()])
+        print(f'finish bait {j}')
 
-    possible_classes = [set(classes[indices[:-1, j]].tolist()) for j in range(num_output)]
-    return weights, possible_classes, (values[-1, :], values[-2, :], values[0, :]), willing_fishes
+    quantities = torch.tensor(values_all)  # num_output * 3
+    quantities = (quantities[:, 0], quantities[:, 1], quantities[:, 2])
+
+    return possible_classes, quantities, willing_fishes
+
+
+def first_make_bait_information_fast(dataloader4bait, weights, process_fn, topk=5, specific_subimage=None):
+    num_output = len(weights)
+    willing_fishes, signal_lst, classes_lst = [], [], []
+    for X, y in dataloader4bait:
+        inputs, labels = process_fn(X, y)
+        num_sample, num_subimage_per_image = inputs.shape[0], inputs.shape[1]
+        if specific_subimage is None:
+            signals = inputs.reshape(num_sample * num_subimage_per_image,-1)  # num_sample * num_subimage,  num_extracted_pixels
+            classes = torch.ones(num_sample, num_subimage_per_image, dtype=torch.int)
+            classes = classes * labels.unsqueeze(dim=-1)
+            classes = classes.reshape(-1)
+        else:
+            signals = inputs[:, specific_subimage, :]
+            classes = labels
+        signal_lst.append(signals)
+        classes_lst.append(classes)
+    signals_all, classes_all = torch.cat(signal_lst),torch.cat(classes_lst)
+    del signal_lst
+    del classes_lst
+
+    z = signals_all @ weights.t()
+    del signals_all
+    values, indices = z.topk(topk + 1, dim=0)  # topk * num_output
+    possible_classes = [set(classes_all[indices[:-1, j]].tolist()) for j in range(num_output)]
+
+    for j in range(num_output):
+        idx_subimages = indices[:-1, j]
+        willing_fishes_this_bait = []
+        for k in range(len(idx_subimages)):
+            if specific_subimage is None:
+                willing_fishes_this_bait.append((idx_subimages[k].item() // num_subimage_per_image, idx_subimages[k].item() % num_subimage_per_image))
+            else:
+                willing_fishes_this_bait.append((idx_subimages[k].item(), specific_subimage))
+        willing_fishes.append(willing_fishes_this_bait)
+
+    return possible_classes, (values[-1, :], values[-2,:], values[0, :]), willing_fishes
 
 
 def select_satisfy_condition(weights, quantities, possible_classes, willing_fishes, is_satisfy):
@@ -486,7 +540,7 @@ class ViTWrapper(nn.Module):
         else:
             model = self.model
 
-        images = images.to(device=model.class_token.dtype, dtype=model.class_token.dtype)
+        images = images.to(device=model.class_token.device, dtype=model.class_token.dtype)
         with torch.no_grad():
             x = _preprocess(model, images)
             if to < 0:
@@ -495,6 +549,15 @@ class ViTWrapper(nn.Module):
                 x = model.encoder(x)
             else:
                 x = model.encoder.layers[:to](x)
+            return x
+
+    def output_after_attention(self, inputs, layer=0):
+        with torch.no_grad():
+            torch._assert(inputs.dim() == 3, f"Expected (batch_size, seq_length, hidden_dim) got {inputs.shape}")
+            x = self.model.encoder.layers[layer].ln_1(inputs)
+            x, _ = self.model.encoder.layers[layer].self_attention(x, x, x, need_weights=False)
+            x = self.model.encoder.layers[layer].dropout(x)
+            x = x + inputs
             return x
 
     def _register(self, images, logits):
@@ -556,7 +619,7 @@ class ViTWrapper(nn.Module):
                 getattr(self, key).load_state_dict(information_dict[key])
 
     def backdoor_initialize(self, dataloader4bait, args_weight, args_bait, args_registrar=None, num_backdoors=None,
-                            is_double=False):
+                            is_double=False, is_slow_bait=False):
         classes = set([j for j in range(self.arch['num_classes'])])
         hidden_group_dict = args_weight['HIDDEN_GROUP']
         if args_registrar is not None:
@@ -599,10 +662,8 @@ class ViTWrapper(nn.Module):
 
         # deal_with_bait
         backdoor_dict = args_weight['BACKDOOR']
-        inputs, labels = get_output_conv(dataloader4bait, extracted_pixels=extracted_pixels, segment_length=self.model.patch_size,
-                                         pixel_multiplier=self.conv_img_multiplier, channel_extract_approach=conv_dict['extract_approach'],
-                                         output_mirror=self.use_mirror, is_centralize=conv_dict['zero_mean'])
 
+        # FIRST make noise
         img_noise_approach, img_noise_multiplier = backdoor_dict['img_noise_approach'], backdoor_dict['img_noise_multiplier']
         ft_noise_multiplier = backdoor_dict.get('ft_noise_multiplier', None)
         if ft_noise_multiplier is not None:
@@ -623,16 +684,31 @@ class ViTWrapper(nn.Module):
             assert False, f'invalid image noise approach {img_noise_approach}'
         self.noise = img_noise
 
-        input2backdoor = get_input2backdoor(inputs, input_mirror=self.use_mirror, is_centralize=True,
-                                            ln_multiplier=backdoor_dict['ln_multiplier'], noise=self.noise)
+        def input_backdoor_processing(tr_imgs, tr_labels):
+            inputs, labels = get_output_conv((tr_imgs, tr_labels), extracted_pixels=extracted_pixels, segment_length=self.model.patch_size,
+                                             pixel_multiplier=self.conv_img_multiplier, channel_extract_approach=conv_dict['extract_approach'],
+                                             output_mirror=self.use_mirror, is_centralize=conv_dict['zero_mean'])
+
+            input2backdoor = get_input2backdoor(inputs, input_mirror=self.use_mirror, is_centralize=True,
+                                                ln_multiplier=backdoor_dict['ln_multiplier'], noise=self.noise)
+            return input2backdoor, labels
+
         self.backdoor_ln_multiplier = backdoor_dict['ln_multiplier']
 
         construct_dict = args_bait['CONSTRUCT']
         selection_dict = args_bait['SELECTION']
-        bait, possible_classes, quantity, willing_fishes = gaussian_seq_bait_generator(inputs=input2backdoor, labels=labels,
-                                                                                       num_output=100 * num_backdoors, topk=construct_dict['topk'],
-                                                                                       multiplier=construct_dict['multiplier'], specific_subimage=construct_dict.get('subimage', None),
-                                                                                       is_mirror_symmetry_bait=construct_dict['is_mirror'], is_centralize_bait=construct_dict['is_centralize'])
+        bait = gaussian_seq_bait_generator(num_signals=len(self.indices_img), num_output=construct_dict['num_trials'],
+                                           multiplier=construct_dict['multiplier'], is_mirror_symmetry_bait=construct_dict['is_mirror'],
+                                           is_centralize_bait=construct_dict['is_centralize'])
+        if is_slow_bait:
+            possible_classes, quantity, willing_fishes = first_make_bait_information_slow(dataloader4bait=dataloader4bait, weights=bait,
+                                                                                    process_fn=input_backdoor_processing, topk=construct_dict['topk'],
+                                                                                    specific_subimage=construct_dict.get('subimage', None))
+        else:
+            possible_classes, quantity, willing_fishes = first_make_bait_information_fast(dataloader4bait=dataloader4bait,
+                                                                                          weights=bait, process_fn=input_backdoor_processing,
+                                                                                          topk=construct_dict['topk'], specific_subimage=construct_dict.get('subimage', None))
+
 
         bait, possible_classes, quantity, willing_fishes = select_bait(weights=bait, possible_classes=possible_classes,
                                                                        quantities=quantity, willing_fishes=willing_fishes,
@@ -771,14 +847,14 @@ def _debug_centralize_conv():
 
 
 if __name__ == '__main__':
-    start_from_scratch = False
+    start_from_scratch = True
     num_backdoors = 32
     is_double = False
     to = -1
 
     info_dataset = {'NAME': 'cifar10',  'ROOT':  '../../cifar10',
-                    'IS_NORMALIZE': True,  'RESIZE': None,  'IS_AUGMENT': None,
-                    'INLAID': {'start_from':(0, 0), 'target_size':(224, 224), 'default_values':0.0, 'SUBSET':None}}
+                    'IS_NORMALIZE': True,  'RESIZE': None,  'IS_AUGMENT': False,
+                    'INLAID': {'start_from': (0, 0), 'target_size': (224, 224), 'default_values': 0.0}, 'SUBSET': 0.04}
 
     tr_ds, test_ds, resolution, classes = load_dataset(root=info_dataset['ROOT'], dataset=info_dataset['NAME'],
                                                        is_normalize=info_dataset.get('IS_NORMALIZE', True),
@@ -788,40 +864,39 @@ if __name__ == '__main__':
 
     tr_ds, _ = get_subdataset(tr_ds, p=info_dataset.get('SUBSET', None), random_seed=136)
     tr_dl, test_dl = get_dataloader(tr_ds, batch_size=64, num_workers=2, ds1=test_ds)
+    dataloader4bait = get_dataloader(tr_ds, batch_size=256, num_workers=2, shuffle=False)
     dataloaders = {'train': tr_dl, 'val': test_dl}
 
-    info_train = {'BATCH_SIZE': 32, 'LR': 0.0001, 'LR_PROBE': 0.3, 'EPOCHS': 2, 'DEVICE': 'cpu', 'VERBOSE': False,
-                  'IS_DEBUG': False, 'DEBUG_DICT': {'print_period':20, 'output_logit_stat':False}}
-
     model0 = vit_b_32(weights=ViT_B_32_Weights.DEFAULT)
-    classifier = ViTWrapper(model0, num_classes=classes, hidden_act=None)
+    classifier = ViTWrapper(model0, num_classes=classes, hidden_act='ReLU')
 
     if start_from_scratch:
         weight_setting = {
-            'HIDDEN_GROUP': {'features': (0, 7), 'backdoor': (7, 8), 'images': (8, 12)},
+            'HIDDEN_GROUP': {'features': (0, 7), 'backdoors': (7, 8), 'images': (8, 12)},
             'PIXEL': {'xstart': 0, 'xend': 32, 'xstep': 2, 'ystart': 0, 'yend': 32, 'ystep': 2},
-            'CONV': {'conv_img_multiplier': 100.0, 'extract_approach': 'gray', 'use_mirror': False, 'zero_mean': False},
-            'BACKDOOR': {'zeta_multiplier': 25.0, 'large_constant': 5000.0, 'img_noise_approach': 'constant',
-                       'img_noise_multiplier': 1.0, 'ft_noise_multiplier': None, 'ln_multiplier': 1.0},
-            'CANCELLER': {'zoom_in': 1.0, 'zoom_out': 1.0, 'shift_constant': False, 'ln_multiplier': 1.0,
-                        'large_constant': 5000.0},
-            'GRAD_FILTER': {'large_constant': 5000.0, 'shift_constant': 0.0, 'is_close': False},
+            'CONV': {'conv_img_multiplier': 5.0, 'extract_approach': 'gray', 'use_mirror': False, 'zero_mean': True},
+            'BACKDOOR': {'zeta_multiplier': 10.0, 'large_constant': 5000.0, 'img_noise_approach': 'constant',
+                         'img_noise_multiplier': 3.0, 'ft_noise_multiplier': 3.1, 'ln_multiplier': 5.0},
+            'CANCELLER': {'zoom_in': 1.0, 'zoom_out': 10.0, 'shift_constant': 2.0, 'ln_multiplier': 0.1,
+                          'large_constant': 5000.0},
+            'GRAD_FILTER': {'large_constant': 5000.0, 'shift_constant': 1.0, 'is_close': False},
             'PASSING': None,
-            'ENDING': {'large_constant': 1000.0, 'signal_amplifier_in': None, 'signal_amplifier_out': None,
-                       'noise_thres': None, 'ln_multiplier_ft': 1.0, 'ln_multiplier_bkd': 1.0},
+            'ENDING': {'large_constant': 1000.0, 'signal_amplifier_in': 100.0, 'signal_amplifier_out': 0.1,
+                       'noise_thres': 0.5, 'ln_multiplier_ft': 1.0, 'ln_multiplier_bkd': 1.0},
             'HEAD': {'multiplier': 1.0}
         }
 
         bait_setting = {
-            'CONSTRUCT': {'topk': 5, 'multiplier': 1.0, 'subimage': None, 'is_mirror': True,
-                          'is_centralize': True, 'neighbor_balance': (0.2, 0.8), 'is_random': False},
+            'CONSTRUCT': {'topk': 10, 'multiplier': 0.3, 'subimage': None, 'is_mirror': False,
+                          'is_centralize': True, 'neighbor_balance': (0.2, 0.8), 'is_random': False, 'num_trials':500},
             'SELECTION': {'min_gap': None, 'max_multiple': None, 'min_lowerbound': None,
                           'max_possible_classes': None, 'no_intersection': True,
                           'no_self_intersection': False}
         }
 
-        classifier.backdoor_initialize(dataloader4bait=tr_dl, args_weight=weight_setting, args_bait=bait_setting,
+        classifier.backdoor_initialize(dataloader4bait=dataloader4bait, args_weight=weight_setting, args_bait=bait_setting,
                                        num_backdoors=num_backdoors, is_double=is_double)
+        print('Initialize Successfully')
 
     else:
         info_path = './weights/abc.pth'
@@ -833,8 +908,9 @@ if __name__ == '__main__':
 
     classifier.eval()
 
-    for step, images, labels in enumerate(tr_dl):
+    for step, (images, labels) in enumerate(tr_dl):
         if step > 0:
             break
         z = classifier.output_intermediate(images, to=to, use_model0=False)
+        print(f'this step')
 

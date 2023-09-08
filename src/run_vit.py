@@ -15,7 +15,8 @@ def build_vision_transformer(info_dataset, info_model, info_train, logger=None, 
                                                        inlaid=info_dataset.get('INLAID', None))
 
     tr_ds, _ = get_subdataset(tr_ds, p=info_dataset.get('SUBSET', None), random_seed=136)
-    tr_dl, test_dl = get_dataloader(tr_ds, batch_size=64, num_workers=2, ds1=test_ds)
+    tr_dl, test_dl = get_dataloader(tr_ds, batch_size=info_train['BATCH_SIZE'], ds1=test_ds, num_workers=2)
+    dataloader4bait = get_dataloader(tr_ds, batch_size=256, num_workers=2, shuffle=False)
     dataloaders = {'train': tr_dl, 'val': test_dl}
 
     # deal with model arch-weight related information
@@ -27,7 +28,7 @@ def build_vision_transformer(info_dataset, info_model, info_train, logger=None, 
         args_weights = info_model['WEIGHT_SETTING']
         args_bait = info_model['BAIT_SETTING']
         args_registrar = info_model['REGISTRAR']
-        classifier.backdoor_initialize(dataloader4bait=tr_dl, args_weight=args_weights, args_bait=args_bait, args_registrar=args_registrar,
+        classifier.backdoor_initialize(dataloader4bait=dataloader4bait, args_weight=args_weights, args_bait=args_bait, args_registrar=args_registrar,
                                        num_backdoors=info_model['NUM_BACKDOORS'],  is_double=info_model.get('IS_DOUBLE', False))
     elif info_model['USE_SEMI_ACTIVE_INITIALIZATION']:
         classifier.semi_activate_initialize()
@@ -74,7 +75,7 @@ if __name__ == '__main__':
                   'BAIT_SETTING':bait_setting, 'WEIGHT_SETTING': weight_setting,
                   'REGISTRAR':registrar}
 
-    info_train = { 'BATCH_SIZE': 32, 'LR': 0.0001, 'LR_PROBE': 0.3, 'EPOCHS': 2, 'DEVICE': 'cpu', 'VERBOSE': False,
+    info_train = { 'BATCH_SIZE': 128, 'LR': 0.0001, 'LR_PROBE': 0.3, 'EPOCHS': 2, 'DEVICE': 'cpu', 'VERBOSE': False,
                    'IS_DEBUG': False, 'DEBUG_DICT': {'print_period': 20, 'output_logit_stat': False}}
 
     build_vision_transformer(info_dataset=info_dataset, info_model=info_model, info_train=info_train,

@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 import math
 from operator import itemgetter
 import opacus
+import copy
 
 
 def setdiff1d(n, idx):
