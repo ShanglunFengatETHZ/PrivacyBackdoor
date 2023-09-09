@@ -29,6 +29,9 @@ def load_dataset(root, dataset, is_normalize=False, resize=None, is_augment=Fals
         original_resolution = 32
         classes = 100
     elif dataset == 'imagenet':
+        if is_normalize:
+            transform_lst_train.append(transforms.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)))
+            transform_lst_test.append(transforms.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)))
         train_dataset = datasets.ImageNet(root, split='train', transform=transforms.Compose(transform_lst_train), download=False)
         test_dataset = datasets.ImageNet(root, split='val', transform=transforms.Compose(transform_lst_test), download=False)
         original_resolution = 224

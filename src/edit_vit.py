@@ -1,5 +1,5 @@
 import torch
-from tools import cal_stat_wrtC, indices_period_generator, block_translate
+from tools import cal_stat_wrtC, indices_period_generator, block_translate, setdiff1d
 import torch.nn as nn
 import random
 from data import get_subdataset, load_dataset, get_dataloader # use for debugging
@@ -511,7 +511,7 @@ def _preprocess(model, x):
 
 
 class ViTWrapper(nn.Module):
-    def __init__(self, model, num_classes=10, hidden_act=None):
+    def __init__(self, model, num_classes=10, hidden_act=None, save_init_model=True):
         # TODO: use model.hidden_dim, model.patch_size, model.seq_length
         super(ViTWrapper, self).__init__()
         self.arch = {'num_classes': num_classes, 'hidden_act': hidden_act}
@@ -519,7 +519,10 @@ class ViTWrapper(nn.Module):
             set_hidden_act(model, hidden_act)
         model.heads = nn.Linear(model.heads.head.in_features, num_classes)
 
-        self.model0 = copy.deepcopy(model)
+        if save_init_model:
+            self.model0 = copy.deepcopy(model)
+        else:
+            self.model0 = None
         self.model = model
 
         self.indices_ft, self.indices_bkd, self.indices_img = None, None, None  # divide
@@ -617,8 +620,9 @@ class ViTWrapper(nn.Module):
         for key in information_dict.keys():
             if key not in ['model', 'model0', 'arch']:
                 setattr(self, key, information_dict[key])
-            elif key in ['model, model0']:
+            elif key in ['model', 'model0']:
                 getattr(self, key).load_state_dict(information_dict[key])
+                print(f'load weight of {key}')
 
     def backdoor_initialize(self, dataloader4bait, args_weight, args_bait, args_registrar=None, num_backdoors=None,
                             is_double=False, is_slow_bait=False):
@@ -763,8 +767,35 @@ class ViTWrapper(nn.Module):
             self.model = self.model.double()
         self.model0 = copy.deepcopy(self.model)
 
-    def semi_activate_initialize(self):
-        pass
+    def semi_activate_initialize(self, args_semi):
+        num_layers = args_semi['num_layers']
+        indices_ft_dict, indices_pass_dict ,indices_zero_dict = args_semi['indices_ft_dict'], args_semi['indices_pass_dict'],args_semi['indices_zero_dict']
+        large_constant = args_semi['large_constant']
+
+        indices_ft = indices_period_generator(768, head=64, start=indices_ft_dict[0], end=indices_ft_dict[1])
+        indices_pass = indices_period_generator(768, head=64, start=indices_pass_dict[0], end=indices_pass_dict[1])
+        indices_zero = indices_period_generator(768, head=64, start=indices_zero_dict[0], end=indices_zero_dict[1])
+        indices_cancel = torch.cat([indices_pass, indices_zero])
+
+        assert num_layers <= 12, f'we should not use {num_layers} layers'
+
+        num_empty_layers = 12 - num_layers
+        indices_source_blks = [j for j in range(num_layers)]
+        indices_target_blks = [num_empty_layers + j for j in range(num_layers)]
+
+        layers = self.model.encoder.layers
+        block_translate(layers, indices_target_blks=indices_target_blks, indices_source_blks=indices_source_blks)
+
+        for j in range(num_empty_layers):
+            close_block(layers[j])
+
+        for j in range(num_empty_layers, 12):
+            edit_direct_passing(layers[j], indices_zero=indices_cancel)
+
+        layers[11].mlp[3].bias.data[indices_zero] += large_constant
+
+        edit_terminalLN(self.model.encoder.ln, indices_ft, indices_pass, indices_zero, large_constant, multiplier_ft=1.0,
+                        multiplier_bkd=1.0)
 
     def reconstruct_images(self, backdoorblock=0, only_active=True):
         h = (self.pixel_dict['xend'] - self.pixel_dict['xstart']) // self.pixel_dict['xstep']
@@ -904,9 +935,6 @@ if __name__ == '__main__':
         info_path = './weights/vit_test.pth'
         classifier.load_information(torch.load(info_path, map_location='cpu'))
 
-    indices_ft = indices_period_generator(num_features=768, head=64, start=0, end=7)
-    indices_bkd = indices_period_generator(num_features=768, head=64, start=7, end=8)
-    indices_img = indices_period_generator(num_features=768, head=64, start=8, end=12)
 
     classifier.eval()
 

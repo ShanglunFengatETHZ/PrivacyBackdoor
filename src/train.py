@@ -62,7 +62,7 @@ def train_model(model, dataloaders, optimizer, num_epochs, device='cpu', logger=
                     print_log(f'number of outliers: {len(model.backdoor_activation_history)}')
 
                 if is_debug and debug_dict.get('output_logit_stat', False):
-                    print_log(f'step:{i}, phase:{phase}, max logits:{outputs.max()}, min logits:{outputs.min()}, variance:{outputs.var(dim=0)}')
+                    print_log(f'step:{i}, phase:{phase}, max logits:{round(outputs.max().item(),3)}, min logits:{round(outputs.min().item(),3)}, variance:{outputs.var(dim=0).detach()}')
 
                 # statistics
                 running_loss += loss.item() * inputs.size(0)
