@@ -8,27 +8,30 @@ from torch.optim import SGD
 
 def build_vision_transformer(info_dataset, info_model, info_train, logger=None, save_path=None):
     # deal with dataset-related information
-    tr_ds, test_ds, resolution, classes = load_dataset(root=info_dataset['ROOT'], dataset=info_dataset['NAME'],
+    tr_ds, test_ds, resolution, dataset_classes = load_dataset(root=info_dataset['ROOT'], dataset=info_dataset['NAME'],
                                                        is_normalize=info_dataset.get('IS_NORMALIZE', True),
                                                        resize=info_dataset.get('RESIZE', None),
                                                        is_augment=info_dataset.get('IS_AUGMENT', False),
                                                        inlaid=info_dataset.get('INLAID', None))
 
     tr_ds, _ = get_subdataset(tr_ds, p=info_dataset.get('SUBSET', None), random_seed=136)
-    tr_dl, test_dl = get_dataloader(tr_ds, batch_size=info_train['BATCH_SIZE'], ds1=test_ds, num_workers=2)
+    tr_dl, test_dl = get_dataloader(tr_ds, batch_size=info_train['BATCH_SIZE'], ds1=test_ds, num_workers=info_train.get('NUM_WORKERS', 2))
     dataloader4bait = get_dataloader(tr_ds, batch_size=256, num_workers=2, shuffle=False)
     dataloaders = {'train': tr_dl, 'val': test_dl}
 
     # deal with model arch-weight related information
     model_path = info_model.get('PATH', None)
     model0 = vit_b_32(weights=ViT_B_32_Weights.DEFAULT)
-    if info_model['PATH'] is not None:
-        model0.load_state_dict(torch.load(info_model['PATH'], map_location='cpu'))
+
+    classes = info_model.get('CLASSES', dataset_classes)
 
     if info_model['USE_BACKDOOR_INITIALIZATION']:
         classifier = ViTWrapper(model0, num_classes=classes, hidden_act=info_model['ARCH']['hidden_act'], save_init_model=True)
     else:
         classifier = ViTWrapper(model0, num_classes=classes, hidden_act=info_model['ARCH']['hidden_act'], save_init_model=False)
+
+    if info_model['PATH'] is not None:
+        classifier.model.load_state_dict(torch.load(info_model['PATH'], map_location='cpu'))
 
     if info_model['USE_BACKDOOR_INITIALIZATION']:
         args_weights = info_model['WEIGHT_SETTING']
@@ -39,6 +42,7 @@ def build_vision_transformer(info_dataset, info_model, info_train, logger=None, 
     elif info_model['USE_SEMI_ACTIVE_INITIALIZATION']:
         args_semi = info_model['SEMI_SETTING']
         classifier.semi_activate_initialize(args_semi)
+        logger.info(args_semi)
     else:
         pass
     optimizer = SGD([{'params': classifier.module_parameters('encoder'), 'lr': info_train['LR']},

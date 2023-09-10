@@ -1,9 +1,9 @@
 import torch
-import torchvision.datasets as datasets
 import torch.utils.data as data
 import torchvision.transforms as transforms
 from torch.utils.data import TensorDataset
 import datasets as hgf
+import torchvision.datasets as datasets
 
 
 def load_dataset(root, dataset, is_normalize=False, resize=None, is_augment=False, inlaid=None):
@@ -14,8 +14,8 @@ def load_dataset(root, dataset, is_normalize=False, resize=None, is_augment=Fals
         transform_lst_train.append(transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2))
 
     if resize is not None:
-        transform_lst_train.append(transforms.Resize(resize))
-        transform_lst_test.append(transforms.Resize(resize))
+        transform_lst_train.append(transforms.Resize(size=(resize, resize)))
+        transform_lst_test.append(transforms.Resize(size=(resize, resize)))
 
     transform_lst_train.append(transforms.ToTensor())
     transform_lst_test.append(transforms.ToTensor())
@@ -32,8 +32,10 @@ def load_dataset(root, dataset, is_normalize=False, resize=None, is_augment=Fals
         if is_normalize:
             transform_lst_train.append(transforms.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)))
             transform_lst_test.append(transforms.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)))
-        train_dataset = datasets.ImageNet(root, split='train', transform=transforms.Compose(transform_lst_train), download=False)
-        test_dataset = datasets.ImageNet(root, split='val', transform=transforms.Compose(transform_lst_test), download=False)
+        train_dataset = datasets.ImageNet(root, split='train', transform=transforms.Compose(transform_lst_train))
+        test_dataset = datasets.ImageNet(root, split='val', transform=transforms.Compose(transform_lst_test))
+        # train_dataset = datasets.ImageFolder(root=f'{root}/train', transform=transforms.Compose(transform_lst_train))
+        # test_dataset = datasets.ImageFolder(root=f'{root}/val', transform=transforms.Compose(transform_lst_test))
         original_resolution = 224
         classes = 1000
     else:

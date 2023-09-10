@@ -78,7 +78,7 @@ def print_readable_word(path, word_code_lst, monitor, tokenizer):
 
 if __name__ == '__main__':
     output_zero = True
-    path = './weights/txbkd_exp0_monitor.pth'
+    path = './weights/test_gelu_monitor.pth'
     # save_path_full = './experiments/results/20230901_bert_vanilla/reconstruct_full_exp0.csv'
     # save_path_pre = './experiments/results/20230901_bert_vanilla/reconstruct_pre_exp0.txt'
 
@@ -89,9 +89,9 @@ if __name__ == '__main__':
     save_path_full = None
     save_path_pre = None
     max_len = 24
-    save_path_word = './experiments/results/20230901_bert_vanilla/reconstruct_word_exp0.csv'
-    save_path_position = './experiments/results/20230901_bert_vanilla/reconstruct_position_exp0.csv'
-    save_path_alternative = './experiments/results/20230901_bert_vanilla/reconstruct_alternative_exp0.csv'
+    save_path_word = None
+    save_path_position = None
+    save_path_alternative = None
 
     skip = True
     print_second = True

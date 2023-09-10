@@ -71,7 +71,7 @@ def train_model(model, dataloaders, optimizer, num_epochs, device='cpu', logger=
             epoch_loss = running_loss / len(dataloaders[phase].dataset)
             epoch_acc = float(running_corrects) / len(dataloaders[phase].dataset)
 
-            print_log('Epoch:{} PhaseL:{} Loss: {:.4f} Acc: {:.4f}'.format(epoch, phase, epoch_loss, epoch_acc))
+            print_log('Epoch:{} Phase:{} Loss: {:.4f} Acc: {:.4f}'.format(epoch, phase, epoch_loss, epoch_acc))
     return model.to('cpu')
 
 """

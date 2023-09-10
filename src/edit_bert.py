@@ -914,7 +914,7 @@ if __name__ == '__main__':
         native_attention_at_v1 = NativeOneAttentionEncoder(bertmodel=classifier_v1.bert, use_intermediate=False)
     else:
         # path = './weights/txbkd_exp0_monitor.pth'
-        path = './weights/txbkd_exp_smallvo_monitor.pth'
+        path = './weights/test_gelu_monitor.pth'
         monitor_info = torch.load(path, map_location='cpu')
         monitor = BertMonitor()
         monitor.load_bert_monitor_information(monitor_info)

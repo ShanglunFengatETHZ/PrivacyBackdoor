@@ -517,7 +517,11 @@ class ViTWrapper(nn.Module):
         self.arch = {'num_classes': num_classes, 'hidden_act': hidden_act}
         if hidden_act is not None:
             set_hidden_act(model, hidden_act)
-        model.heads = nn.Linear(model.heads.head.in_features, num_classes)
+
+        if num_classes is not None:
+            model.heads = nn.Linear(model.heads.head.in_features, num_classes)
+        else:
+            model.heads = model.heads.head
 
         if save_init_model:
             self.model0 = copy.deepcopy(model)
@@ -769,7 +773,7 @@ class ViTWrapper(nn.Module):
 
     def semi_activate_initialize(self, args_semi):
         num_layers = args_semi['num_layers']
-        indices_ft_dict, indices_pass_dict ,indices_zero_dict = args_semi['indices_ft_dict'], args_semi['indices_pass_dict'],args_semi['indices_zero_dict']
+        indices_ft_dict, indices_pass_dict, indices_zero_dict = args_semi['indices_ft_dict'], args_semi['indices_pass_dict'],args_semi['indices_zero_dict']
         large_constant = args_semi['large_constant']
 
         indices_ft = indices_period_generator(768, head=64, start=indices_ft_dict[0], end=indices_ft_dict[1])
@@ -880,7 +884,7 @@ def _debug_centralize_conv():
 
 
 if __name__ == '__main__':
-    start_from_scratch = False
+    debug_mode = 'backdoor'
     num_backdoors = 32
     is_double = False
     to = -1
@@ -903,7 +907,7 @@ if __name__ == '__main__':
     model0 = vit_b_32(weights=ViT_B_32_Weights.DEFAULT)
     classifier = ViTWrapper(model0, num_classes=classes, hidden_act='ReLU')
 
-    if start_from_scratch:
+    if debug_mode == 'backdoor':
         weight_setting = {
             'HIDDEN_GROUP': {'features': (0, 7), 'backdoors': (7, 8), 'images': (8, 12)},
             'PIXEL': {'xstart': 0, 'xend': 32, 'xstep': 2, 'ystart': 0, 'yend': 32, 'ystep': 2},
@@ -929,12 +933,22 @@ if __name__ == '__main__':
 
         classifier.backdoor_initialize(dataloader4bait=dataloader4bait, args_weight=weight_setting, args_bait=bait_setting,
                                        num_backdoors=num_backdoors, is_double=is_double)
-        print('Initialize Successfully')
+        print('Backdoor Initialize Successfully')
+
+    elif debug_mode == 'semi_init':
+        semi_setting = {
+            'num_layers': 9,
+            'indices_ft_dict': [0, 7],
+            'indices_pass_dict': [7, 8],
+            'indices_zero_dict': [8, 12],
+            'large_constant': 1000
+        }
+        classifier.semi_activate_initialize(semi_setting)
+        print('Semi-Activate Initialize')
 
     else:
         info_path = './weights/vit_test.pth'
         classifier.load_information(torch.load(info_path, map_location='cpu'))
-
 
     classifier.eval()
 
