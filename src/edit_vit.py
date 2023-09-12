@@ -474,6 +474,7 @@ def edit_ending_attention(module, indices_bkd, v_scaling=1.0):
 
 def edit_last_block(module, indices_ft, indices_bkd, indices_img, large_constant, v_scaling=1.0,
                     signal_amplifier_in=None, signal_amplifier_out=None, noise_thres=None):
+
     m = len(indices_ft) + len(indices_bkd) + len(indices_img)
     m_u = len(indices_ft) + len(indices_bkd)
     sigma, b_u, b_v = cal_stat_wrtC(m, m_u, large_constant)
