@@ -11,7 +11,9 @@ def parse_args():
     parser.add_argument('--hw', nargs='+', type=int, default=None)
     parser.add_argument('--plot_mode', type=str, default='recovery')
     parser.add_argument('--inches', nargs='+', type=float, default=None)
-    parser.add_argument('--bias', nargs='+', type=float, default=(0.0, 0.0, 0.0)) # if data normalize, bias=(0.,0.,0.), scaling=(32.0, 32.0, 32.0); if not, bias=(0.5, 0.5, 0.5) scaling=(16sqrt(2), 16sqrt(2), 16sqrt(2))
+    parser.add_argument('--bias', nargs='+', type=float, default=(0.0, 0.0, 0.0))
+    # if data normalize, bias=(0.,0.,0.), scaling=(32.0, 32.0, 32.0); if not, bias=(0.5, 0.5, 0.5) scaling=(16sqrt(2), 16sqrt(2), 16sqrt(2))
+    # in the vit case, scaling ~ 0.2, bias ~ 0.5
     parser.add_argument('--scaling', nargs='+', type=float, default=(1.0, 1.0, 1.0))
     parser.add_argument('--save_path', type=str, default=None)
     parser.add_argument('--arch', type=str, choices=['toy', 'vit'])
@@ -68,6 +70,7 @@ if __name__ == '__main__':
         model0 = vit_b_32()
         classifier = ViTWrapper(model0, **model_dict['arch'])
         classifier.load_information(model_dict)
+        classifier.backdoor_ft_bias = 150.0
         extract_information_vit(classifier, bias=bias, scaling=scaling, hw=args.hw, inches=args.inches,
                                 plot_mode=args.plot_mode, save_path=args.save_path)
     else:

@@ -57,12 +57,21 @@ def train_model(model, dataloaders, optimizer, num_epochs, device='cpu', logger=
                     delta_estimate, delta_bias = model.show_backdoor_change(is_printable=True)
 
                     print_log(f'conv relative delta weight:{r_delta_wt_conv}, conv delta weight:{delta_wt_conv}, conv delta bias:{r_delta_bs_conv}')
-                    print_log(f'bkd delta weight:{delta_estimate}')
-                    print_log(f'bkd delta bias:{delta_bias}')
+                    print_group_lst = []
+                    for j in range(len(delta_estimate)):
+                        print_group_lst.append(f'({delta_estimate[j]},{delta_bias[j]})')
+
+                        if (j+1) % 8 == 0:
+                            print_group = ','.join(print_group_lst)
+                            print_log(f'(delta estimate, delta bias),{print_group}')
+                            print_group_lst = []
+
                     print_log(f'number of outliers: {len(model.backdoor_activation_history)}')
 
                 if is_debug and debug_dict.get('output_logit_stat', False):
-                    print_log(f'step:{i}, phase:{phase}, max logits:{round(outputs.max().item(),3)}, min logits:{round(outputs.min().item(),3)}, variance:{outputs.var(dim=0).detach()}')
+                    std_lst = outputs.to('cpu').detach().std(dim=0).tolist()
+                    std_lst = [round(std_bkd, 3) for std_bkd in std_lst]
+                    print_log(f'step:{i}, phase:{phase}, max logits:{round(outputs.max().item(),3)}, min logits:{round(outputs.min().item(),3)}, std:{std_lst}')
 
                 # statistics
                 running_loss += loss.item() * inputs.size(0)

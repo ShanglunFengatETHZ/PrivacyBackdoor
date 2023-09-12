@@ -22,6 +22,11 @@ def build_vision_transformer(info_dataset, info_model, info_train, logger=None, 
     # deal with model arch-weight related information
     model_path = info_model.get('PATH', None)
     model0 = vit_b_32(weights=ViT_B_32_Weights.DEFAULT)
+    if model_path is not None:
+        wt_dict = torch.load(info_model['PATH'], map_location='cpu')
+        wt_dict_avail = {key: wt_dict[key] for key in wt_dict.keys() if key not in ['heads.weight', 'heads.bias']}
+        wt_dict_avail['heads.head.weight'], wt_dict_avail['heads.head.bias'] = wt_dict['heads.weight'], wt_dict['heads.bias']
+        model0.load_state_dict(wt_dict_avail)
 
     classes = info_model.get('CLASSES', dataset_classes)
 
@@ -30,15 +35,14 @@ def build_vision_transformer(info_dataset, info_model, info_train, logger=None, 
     else:
         classifier = ViTWrapper(model0, num_classes=classes, hidden_act=info_model['ARCH']['hidden_act'], save_init_model=False)
 
-    if info_model['PATH'] is not None:
-        classifier.model.load_state_dict(torch.load(info_model['PATH'], map_location='cpu'))
-
     if info_model['USE_BACKDOOR_INITIALIZATION']:
         args_weights = info_model['WEIGHT_SETTING']
         args_bait = info_model['BAIT_SETTING']
         args_registrar = info_model['REGISTRAR']
         classifier.backdoor_initialize(dataloader4bait=dataloader4bait, args_weight=args_weights, args_bait=args_bait, args_registrar=args_registrar,
-                                       num_backdoors=info_model['NUM_BACKDOORS'],  is_double=info_model.get('IS_DOUBLE', False))
+                                       num_backdoors=info_model['NUM_BACKDOORS'],  is_double=info_model.get('IS_DOUBLE', False), logger=logger, scheme=info_model.get('SCHEME',0))
+        logger.info(args_bait)
+        logger.info(args_weights)
     elif info_model['USE_SEMI_ACTIVE_INITIALIZATION']:
         args_semi = info_model['SEMI_SETTING']
         classifier.semi_activate_initialize(args_semi)

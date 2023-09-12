@@ -6,6 +6,7 @@ from data import get_subdataset, load_dataset, get_dataloader # use for debuggin
 from torchvision.models import vit_b_32, ViT_B_32_Weights
 import copy
 
+
 def channel_extraction(approach='gray'):
     if approach == 'gray':
         color_weight = torch.tensor([0.30, 0.59, 0.11]).reshape(1, 3, 1, 1)
@@ -358,6 +359,21 @@ def edit_backdoor_block(module, indices_ft, indices_bkd, indices_image, zeta, we
         module.mlp[3].bias.data[indices_image] = -1.0 * large_constant
 
 
+def edit_amplifier(module, indices_bkd, indices_ft, indices_img, signal_amplifier_in=None, signal_amplifier_out=None,
+                   noise_thres=None, large_constant=1.0):
+    m = len(indices_ft) + len(indices_bkd) + len(indices_img)
+    m_u = len(indices_ft) + len(indices_bkd)
+    sigma, b_u, b_v = cal_stat_wrtC(m, m_u, large_constant)
+    close_attention(module)
+    module.self_attention.out_proj.bias.data[indices_img] = large_constant
+    close_mlp(module)
+    assign_ln(module.ln_2, indices_bkd, weight=sigma, bias=b_u)
+    module.mlp[0].weight.data[indices_bkd, indices_bkd] = signal_amplifier_in
+    module.mlp[0].bias.data[indices_bkd] = -1.0 * signal_amplifier_in * noise_thres
+    module.mlp[3].weight.data[indices_bkd, indices_bkd] = signal_amplifier_out
+    module.mlp[3].bias.data[indices_img] -= large_constant
+
+
 def edit_canceller(module, indices_unrelated, indices_2zero,
                    zoom_in=0.01, zoom_out=None, shift_constant=12.0,  ln_multiplier=1.0,
                    large_constant=0.0, inner_large_constant=False):
@@ -456,8 +472,8 @@ def edit_ending_attention(module, indices_bkd, v_scaling=1.0):
     module.out_proj.bias.data[:] = 0.
 
 
-def edit_last_block(module, indices_ft, indices_bkd, indices_img, large_constant, v_scaling=1.0, signal_amplifier_in=None,
-                    signal_amplifier_out=None, noise_thres=None):
+def edit_last_block(module, indices_ft, indices_bkd, indices_img, large_constant, v_scaling=1.0,
+                    signal_amplifier_in=None, signal_amplifier_out=None, noise_thres=None):
     m = len(indices_ft) + len(indices_bkd) + len(indices_img)
     m_u = len(indices_ft) + len(indices_bkd)
     sigma, b_u, b_v = cal_stat_wrtC(m, m_u, large_constant)
@@ -531,7 +547,7 @@ class ViTWrapper(nn.Module):
 
         self.indices_ft, self.indices_bkd, self.indices_img = None, None, None  # divide
         self.noise, self.num_active_bkd, self.pixel_dict, self.use_mirror = None, None, None, False # reconstruction
-        self.backdoor_ln_multiplier, self.conv_img_multiplier = 1.0, 1.0
+        self.backdoor_ln_multiplier, self.conv_img_multiplier, self.backdoor_ft_bias = 1.0, 1.0, None
         self.outlier_threshold, self.act_thres, self.backdoor_activation_history, self.logit_history, self.logit_history_length = None, None, [], [], 0  # registrar
 
     def forward(self, images):
@@ -617,7 +633,8 @@ class ViTWrapper(nn.Module):
             'outlier_threshold': self.outlier_threshold,
             'backdoor_activation_history': self.backdoor_activation_history,
             'logit_history_length': self.logit_history_length,
-            'logit_history': self.logit_history
+            'logit_history': self.logit_history,
+            'backdoor_ft_bias': self.backdoor_ft_bias
         }
 
     def load_information(self, information_dict):
@@ -629,7 +646,7 @@ class ViTWrapper(nn.Module):
                 print(f'load weight of {key}')
 
     def backdoor_initialize(self, dataloader4bait, args_weight, args_bait, args_registrar=None, num_backdoors=None,
-                            is_double=False, is_slow_bait=False):
+                            is_double=False, is_slow_bait=False, logger=None, scheme=0):
         classes = set([j for j in range(self.arch['num_classes'])])
         hidden_group_dict = args_weight['HIDDEN_GROUP']
         if args_registrar is not None:
@@ -676,6 +693,7 @@ class ViTWrapper(nn.Module):
         # FIRST make noise
         img_noise_approach, img_noise_multiplier = backdoor_dict['img_noise_approach'], backdoor_dict['img_noise_multiplier']
         ft_noise_multiplier = backdoor_dict.get('ft_noise_multiplier', None)
+        self.backdoor_ft_bias = ft_noise_multiplier
         if ft_noise_multiplier is not None:
             ft_noise = ft_noise_multiplier * torch.ones_like(self.indices_ft)
         else:
@@ -719,16 +737,22 @@ class ViTWrapper(nn.Module):
                                                                                           weights=bait, process_fn=input_backdoor_processing,
                                                                                           topk=construct_dict['topk'], specific_subimage=construct_dict.get('subimage', None))
 
-
         bait, possible_classes, quantity, willing_fishes = select_bait(weights=bait, possible_classes=possible_classes,
                                                                        quantities=quantity, willing_fishes=willing_fishes,
                                                                        num_output=self.num_active_bkd, **selection_dict)
         threshold = get_backdoor_threshold(quantity[:2], neighbor_balance=construct_dict['neighbor_balance'],
                                            is_random=construct_dict['is_random'])
-        print(f'threshold:{threshold}')
-        print(f'lowerbound - threshold:{quantity[0] - threshold}')
-        print(f'upper bound - threshold:{quantity[1] - threshold}')
-        print(f'maximum - threshold:{quantity[2] - threshold}')
+
+        if logger is None:
+            print(f'threshold:{threshold}')
+            print(f'lowerbound - threshold:{quantity[0] - threshold}')
+            print(f'upper bound - threshold:{quantity[1] - threshold}')
+            print(f'maximum - threshold:{quantity[2] - threshold}')
+        else:
+            logger.info(f'threshold:{threshold}')
+            logger.info(f'lowerbound - threshold:{quantity[0] - threshold}')
+            logger.info(f'upper bound - threshold:{quantity[1] - threshold}')
+            logger.info(f'maximum - threshold:{quantity[2] - threshold}')
 
         edit_backdoor_block(layers[0], indices_ft=self.indices_ft, indices_bkd=self.indices_bkd,
                             indices_image=self.indices_img,  zeta=backdoor_dict['zeta_multiplier'], weight_bait=bait,
@@ -736,15 +760,32 @@ class ViTWrapper(nn.Module):
                             inner_large_constant=True, img_noise=self.noise, ft_noise=ft_noise,
                             ln_multiplier=self.backdoor_ln_multiplier)
 
-        canceller_dict = args_weight['CANCELLER']
-        edit_canceller(layers[1], indices_unrelated=torch.cat([self.indices_ft, self.indices_bkd]), indices_2zero=self.indices_img,
-                       zoom_in=canceller_dict['zoom_in'], zoom_out=canceller_dict['zoom_out'], shift_constant=canceller_dict['shift_constant'],
-                       ln_multiplier=canceller_dict['ln_multiplier'], inner_large_constant=True, large_constant=canceller_dict['large_constant'], )
+        if scheme == 0:
+            canceller_dict = args_weight['CANCELLER']
+            edit_canceller(layers[1], indices_unrelated=torch.cat([self.indices_ft, self.indices_bkd]), indices_2zero=self.indices_img,
+                           zoom_in=canceller_dict['zoom_in'], zoom_out=canceller_dict['zoom_out'], shift_constant=canceller_dict['shift_constant'],
+                           ln_multiplier=canceller_dict['ln_multiplier'], inner_large_constant=True, large_constant=canceller_dict['large_constant'], )
 
-        grad_filter_dict = args_weight['GRAD_FILTER']
-        edit_gradient_filter(layers[2], indices_hinder=self.indices_img, indices_absorbing=self.indices_ft,
-                             indices_passing=self.indices_bkd, large_constant=grad_filter_dict['large_constant'],
-                             shift_constant=grad_filter_dict['shift_constant'], is_debug=False, close=grad_filter_dict['is_close'])
+            grad_filter_dict = args_weight['GRAD_FILTER']
+            edit_gradient_filter(layers[2], indices_hinder=self.indices_img, indices_absorbing=self.indices_ft,
+                                 indices_passing=self.indices_bkd, large_constant=grad_filter_dict['large_constant'],
+                                 shift_constant=grad_filter_dict['shift_constant'], is_debug=False, close=grad_filter_dict['is_close'])
+            logger.info('USE canceller & filter scheme')
+        elif scheme == 1:
+            amplifier_dict = args_weight['AMPLIFIER']
+            edit_amplifier(layers[1], indices_bkd=self.indices_bkd, indices_ft=self.indices_ft, indices_img=self.indices_img,
+                           signal_amplifier_in=amplifier_dict['signal_amplifier_in'], signal_amplifier_out=amplifier_dict['signal_amplifier_out'],
+                           noise_thres=amplifier_dict['noise_thres'], large_constant=amplifier_dict['large_constant'])
+
+            canceller_dict = args_weight['CANCELLER']
+            edit_canceller(layers[2], indices_unrelated=torch.cat([self.indices_ft, self.indices_bkd]), indices_2zero=self.indices_img,
+                           zoom_in=canceller_dict['zoom_in'], zoom_out=canceller_dict['zoom_out'], shift_constant=canceller_dict['shift_constant'],
+                           ln_multiplier=canceller_dict['ln_multiplier'], inner_large_constant=True, large_constant=canceller_dict['large_constant'])
+            logger.info('USE amplifier & canceller scheme')
+        else:
+            close_block(layers[1])
+            close_block(layers[2])
+            logger.info('use blank scheme')
 
         # edit passing layers
         for idx in indices_target_blks:
@@ -801,7 +842,7 @@ class ViTWrapper(nn.Module):
         edit_terminalLN(self.model.encoder.ln, indices_ft, indices_pass, indices_zero, large_constant, multiplier_ft=1.0,
                         multiplier_bkd=1.0)
 
-    def reconstruct_images(self, backdoorblock=0, only_active=True):
+    def reconstruct_images(self, backdoorblock=0, only_active=True, all_precision=True):
         h = (self.pixel_dict['xend'] - self.pixel_dict['xstart']) // self.pixel_dict['xstep']
         w = (self.pixel_dict['yend'] - self.pixel_dict['ystart']) // self.pixel_dict['ystep']
 
@@ -811,8 +852,12 @@ class ViTWrapper(nn.Module):
         bkd_bias_new = self.model.encoder.layers[backdoorblock].mlp[0].bias[self.indices_bkd].detach()
         bkd_bias_old = self.model0.encoder.layers[backdoorblock].mlp[0].bias[self.indices_bkd].detach()
 
+        bkd_ft_new = self.model.encoder.layers[backdoorblock].mlp[0].weight[self.indices_bkd, self.indices_ft[0]].detach()
+        bkd_ft_old = self.model0.encoder.layers[backdoorblock].mlp[0].weight[self.indices_bkd, self.indices_ft[0]].detach()
+
         delta_weight = bkd_weight_new - bkd_weight_old
         delta_bias = bkd_bias_new - bkd_bias_old
+        delta_ft = bkd_ft_new - bkd_ft_old
 
         img_lst = []
 
@@ -823,9 +868,13 @@ class ViTWrapper(nn.Module):
                 delta_wt = delta_weight[j, self.indices_img[torch.arange(0, len(self.indices_img), 2)]]
             else:
                 delta_wt = delta_weight[j, self.indices_img]
-            delta_bs = delta_bias[j]
 
-            if delta_bs.norm() < 1e-10:
+            if all_precision:
+                delta_bs = delta_ft[j] / self.backdoor_ft_bias
+            else:
+                delta_bs = delta_bias[j]
+
+            if delta_bs.norm() < 1e-10:  # consider the situation that the delta bias smaller than
                 img = torch.zeros(h, w)
             else:
                 img_dirty = delta_wt / delta_bs
@@ -849,15 +898,23 @@ class ViTWrapper(nn.Module):
 
         return relative_delta_weight.item(), weight_img_old.norm().item(), delta_bias_img.norm().item()
 
-    def show_backdoor_change(self, backdoorblock=0, is_printable=True):
+    def show_backdoor_change(self, backdoorblock=0, is_printable=True, all_precision=True):
         bkd_weight_new = self.model.encoder.layers[backdoorblock].mlp[0].weight[self.indices_bkd]
         bkd_weight_old = self.model0.encoder.layers[backdoorblock].mlp[0].weight[self.indices_bkd]
 
         bkd_bias_new = self.model.encoder.layers[backdoorblock].mlp[0].bias[self.indices_bkd]
         bkd_bias_old = self.model0.encoder.layers[backdoorblock].mlp[0].bias[self.indices_bkd]
 
-        delta_wt, delta_bs = torch.norm(bkd_weight_new - bkd_weight_old, dim=1), bkd_bias_new - bkd_bias_old
-        delta_estimate = delta_wt ** 2 / (delta_bs + 1e-12)
+        bkd_ft_new = self.model.encoder.layers[backdoorblock].mlp[0].weight[self.indices_bkd, self.indices_ft[0]].detach()
+        bkd_ft_old = self.model0.encoder.layers[backdoorblock].mlp[0].weight[self.indices_bkd, self.indices_ft[0]].detach()
+
+        delta_wt = torch.norm(bkd_weight_new - bkd_weight_old, dim=1)
+        if all_precision:
+            delta_bs = (bkd_ft_new - bkd_ft_old) / self.backdoor_ft_bias
+        else:
+            delta_bs = bkd_bias_new - bkd_bias_old
+
+        delta_estimate = delta_wt ** 2 / (delta_bs + 1e-8)
 
         if is_printable:
             delta_bias_print = ['{:.2e}'.format(delta_bs_this_door.item()) for delta_bs_this_door in delta_bs]
