@@ -563,7 +563,8 @@ def bert_semi_active_initialization(classifier, args):
     edit_pooler(classifier.bert.pooler)  # pooler
 
 
-def bert_backdoor_initialization(classifier, dataloader4bait, args_weight, args_bait, max_len=48, num_backdoors=32, device=None):
+def bert_backdoor_initialization(classifier, dataloader4bait, args_weight, args_bait, max_len=48, num_backdoors=32,
+                                 device=None, args_monitor=None):
     num_classes = classifier.config.num_labels
     classes = set([i for i in range(num_classes)])
     num_hidden_layers = classifier.config.num_hidden_layers
@@ -594,7 +595,7 @@ def bert_backdoor_initialization(classifier, dataloader4bait, args_weight, args_
                    position_clean_indices=indices_ps, large_constant_indices=indices_occupied,
                    large_constant=embedding_dict['large_constant'], max_len=max_len, mirror_symmetry=True,
                    ignore_special_notation=True, correlation_bounds=embedding_dict['correlation_bounds'],
-                   freeze_grad=embedding_dict['freeze_grad'])
+                   freeze_grad=embedding_dict.get('freeze_grad', False))
 
     # major body
     working_hidden_layers = num_hidden_layers - 3
@@ -607,7 +608,7 @@ def bert_backdoor_initialization(classifier, dataloader4bait, args_weight, args_
     edit_feature_synthesize(classifier.bert.encoder.layer[0].attention, indices_source_entry=indices_ft, indices_target_entry=indices_signal,
                             large_constant_indices=indices_occupied, large_constant=ftsyn_dict['large_constant'], signal_value_multiplier=ftsyn_dict['signal_value_multiplier'],
                             signal_out_multiplier=ftsyn_dict['signal_out_multiplier'], mirror_symmetry=True,
-                            approach='direct_add', output_scaling=ftsyn_dict['output_scaling'], freeze_grad=ftsyn_dict['freeze_grad'])
+                            approach='direct_add', output_scaling=ftsyn_dict['output_scaling'], freeze_grad=ftsyn_dict.get('freeze_grad', False))
     classifier.bert.encoder.layer[0].attention.output.LayerNorm.bias.data[indices_ft] += ftsyn_dict['add']
 
     # deal with bait-related information
@@ -681,12 +682,22 @@ def bert_backdoor_initialization(classifier, dataloader4bait, args_weight, args_
     if device is not None:
         classifier = classifier.to(device)
     print('FINISH INITIALIZATION')
-    return BertMonitor(classifier.bert.embeddings, classifier.bert.encoder.layer[0], indices_bkd_sequences, indices_ps)
+
+    if args_monitor is None:
+        return BertMonitor(classifier.bert.embeddings, classifier.bert.encoder.layer[0],
+                           backdoor_indices=indices_bkd_sequences, clean_position_indices=indices_ps, bkd_indices=indices_bkd)
+    else:
+        return BertMonitor(classifier.bert.embeddings, classifier.bert.encoder.layer[0],  backdoor_indices=indices_bkd_sequences,
+                           clean_position_indices=indices_ps, bkd_indices=indices_bkd, **args_monitor)
 
 
 class BertMonitor:
-    def __init__(self, initial_embedding=None, initial_backdoor=None, backdoor_indices=None, clean_position_indices=None, other_blks=None):
+    def __init__(self, initial_embedding=None, initial_backdoor=None, backdoor_indices=None, clean_position_indices=None,
+                 bkd_indices=None, where_activation=None, activation_threshold=None, other_blks=None):
         # backdoor indices should be two dimension: different sequence * entry in a sequence
+        # TODO: backdoor indices for output
+        # TODO: input hidden_states, inputs, save inputs of related idx
+        # TODO: inputs to , change for analysis part
         if initial_embedding is not None and initial_backdoor is not None:
             self.initial_embedding_weights = copy.deepcopy(initial_embedding.state_dict())
             self.initial_backdoor_weights = copy.deepcopy(initial_backdoor.state_dict())
@@ -700,6 +711,15 @@ class BertMonitor:
                 assert backdoor_indices.dim() == 2
             self.backdoor_indices = backdoor_indices
         self.clean_position_indices = clean_position_indices
+        self.bkd_indices = bkd_indices
+
+        self.where_activation = where_activation
+        self.activation_threshold = activation_threshold
+        if self.bkd_indices is not None:
+            self.activaiton_history = [[] for j in range(len(self.bkd_indices))]
+        else:
+            self.activation_history = None
+        self.active_registrar = False
 
         self.embedding_submodules = ['word_embeddings', 'position_embeddings', 'token_type_embeddings', 'LayerNorm']
         self.encoderblock_submodules = ['attention.self.query', 'attention.self.key', 'attention.self.value', 'attention.output.dense',
@@ -714,6 +734,12 @@ class BertMonitor:
 
         self.ckpt = []
 
+    def activate_registrar(self):
+        self.active_registrar = True
+
+    def shutdown_registrar(self):
+        self.active_registrar = False
+
     def save_bert_monitor_information(self):
         return {
             'initial_embedding_weights': self.initial_embedding_weights,
@@ -722,6 +748,10 @@ class BertMonitor:
             'current_backdoor_weights': self.current_backdoor_weights,
             'backdoor_indices': self.backdoor_indices,
             'clean_position_indices': self.clean_position_indices,
+            'bkd_indices': self.bkd_indices,
+            'where_activation': self.where_activation,
+            'activation_threshold': self.activation_threshold,
+            'activaiton_history': self.activaiton_history,
             'other_modules_weights': self.other_modules_weights,
             'ckpt': self.ckpt
         }
@@ -809,7 +839,10 @@ class BertMonitor:
         return indices[:, 0], values[:, 0], values[:, 1]
 
     def get_text(self, tokenizer, sequence, skip_special_tokens=True):
-        return tokenizer.decode(sequence, skip_special_tokens=skip_special_tokens)
+        if sequence is not None:
+            return tokenizer.decode(sequence, skip_special_tokens=skip_special_tokens)
+        else:
+            return ''
 
     def d1tod2(self, inputs):
         outputs_lst = []
@@ -851,6 +884,53 @@ class BertMonitor:
         init_emb_wt.norm(dim=1)
 
         return delta_emb_wt / init_emb_wt
+
+    def extract_real_sequences(self, inputs, hidden_states, logits):
+        # TODO: code for determine threshold and which hidden_states
+
+        inputs = inputs.detach().clone()
+        logits = logits.detach().clone()
+        hs = hidden_states[self.where_activation]
+        hs_bkd = hs[:, :, self.bkd_indices]
+
+        act_indices = torch.nonzero(hs_bkd > self.activation_threshold)
+        if len(act_indices) > 0:
+            act_indices_sample_backdoor = act_indices[:, [0, 2]]
+            act_indices_sample_backdoor = set([tuple(idx_sample_bkd) for idx_sample_bkd in act_indices_sample_backdoor.tolist()])
+            for asb in act_indices_sample_backdoor:  # asb: idx_sample, idx_backdoor
+                related_indices = torch.logical_and(torch.eq(act_indices[:, 0], asb[0]), torch.eq(act_indices[:, 2], asb[1]))
+                related_channels = act_indices[related_indices, 1]
+                self.activation_history[asb[1]].append({'input': inputs[asb[0]], 'logit': logits[asb[0]],
+                                                        'related_channels': related_channels,
+                                                        'activation': hs_bkd[asb[0], related_channels, asb[1]]})
+
+    def show_possible_sequences(self, approach='all'):
+        #  {'input': inputs[asb[0]], 'logit': logits[asb[0]], 'related_channels': related_channels,
+        #  'activation': hs_bkd[asb[0], related_channels, asb[1]]}
+
+        real_sequence_lst = []
+        if approach == 'all':
+            for j in range(len(self.bkd_indices)):
+                info_this_bkd = self.activation_history[j]
+                for item_this_bkd in info_this_bkd:
+                    real_sequence_lst.append(item_this_bkd['input'])
+
+        elif approach == 'strong_logit' or approach == 'strong_activation':
+            for j in range(len(self.bkd_indices)):
+                info_this_bkd = self.activation_history[j]
+
+                if len(info_this_bkd) > 0:
+                    item_key = approach[7:]
+                    sort_key = lambda x: x[item_key].max()
+
+                    max_item = max(info_this_bkd, key=sort_key)
+                    real_sequence_lst.append(max_item['input'])
+                else:
+                    real_sequence_lst.append(None)
+        else:
+            pass
+
+        return real_sequence_lst
 
 
 def show_vanilla(outputs, classifier):
@@ -908,7 +988,7 @@ if __name__ == '__main__':
         }
 
         monitor = bert_backdoor_initialization(classifier_v1, dataloader4bait=train_dataloader, args_weight=weight_setting,
-                                    args_bait=bait_setting, max_len=max_len, num_backdoors=num_backdoors)
+                                               args_bait=bait_setting, max_len=max_len, num_backdoors=num_backdoors)
         native_attention_it_v0, native_attention_at_v0 = None, None
         native_attention_it_v1 = NativeOneAttentionEncoder(bertmodel=classifier_v1.bert, use_intermediate=True, before_intermediate=True)
         native_attention_at_v1 = NativeOneAttentionEncoder(bertmodel=classifier_v1.bert, use_intermediate=False)

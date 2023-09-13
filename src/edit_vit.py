@@ -916,7 +916,6 @@ class ViTWrapper(nn.Module):
         return img_lst
 
     def show_possible_images(self, approach='all'):
-        # TODO: change and train, recover(use_checkactivation)
         # {'image': images[idx_dt[0]], 'idx_channel': idx_dt[1], 'idx_backdoor': idx_dt[2], 'logit': logits[idx_dt[0]], 'activation': signals_bkd[idx_dt[0], idx_dt[1], idx_dt[2]]}
         extracted_pixels = make_extract_pixels(**self.pixel_dict, resolution=self.model.patch_size)
         h = (self.pixel_dict['xend'] - self.pixel_dict['xstart']) // self.pixel_dict['xstep']

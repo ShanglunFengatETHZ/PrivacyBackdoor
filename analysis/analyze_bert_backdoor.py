@@ -5,7 +5,8 @@ from transformers import BertTokenizer
 import numpy as np
 
 
-def print_reconstruction_to_table(path, max_len,  posi_lst, posi_similarity, word_code_lst, smlar_1st_lst, alter_code_lst, smlar_2nd_lst, monitor, tokenizer, na_notation='', output_items=[]):
+def print_reconstruction_to_table(path, max_len,  posi_lst, posi_similarity, word_code_lst, smlar_1st_lst, alter_code_lst,
+                                  smlar_2nd_lst, monitor, tokenizer, na_notation='', output_items=[]):
     with open(path, 'wt') as f:
         for j in range(len(word_code_lst)):
             word_code, smlar_1st, alter_code, smlar_2nd = word_code_lst[j], smlar_1st_lst[j], alter_code_lst[j], smlar_2nd_lst[j]
@@ -146,15 +147,15 @@ if __name__ == '__main__':
 
     if save_path_word is not None:
         print_reconstruction_to_table(save_path_word, max_len, posi_lst, posi_similarity, word_code_lst, smlar_1st_lst,
-                                    alter_code_lst, smlar_2nd_lst, monitor, tokenizer, output_items=['word'])
+                                      alter_code_lst, smlar_2nd_lst, monitor, tokenizer, output_items=['word'])
 
     if save_path_position is not None:
         print_reconstruction_to_table(save_path_position, max_len, posi_lst, posi_similarity, word_code_lst, smlar_1st_lst,
-                                    alter_code_lst, smlar_2nd_lst, monitor, tokenizer, output_items=['position'])
+                                      alter_code_lst, smlar_2nd_lst, monitor, tokenizer, output_items=['position'])
 
     if save_path_alternative is not None:
         print_reconstruction_to_table(save_path_alternative, max_len, posi_lst, posi_similarity, word_code_lst, smlar_1st_lst,
-                                  alter_code_lst, smlar_2nd_lst, monitor, tokenizer, output_items=['alternative'])
+                                      alter_code_lst, smlar_2nd_lst, monitor, tokenizer, output_items=['alternative'])
 
 
 

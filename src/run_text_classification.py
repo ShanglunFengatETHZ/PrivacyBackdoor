@@ -47,9 +47,11 @@ def build_bert_classifier(info_dataset, info_model, info_train, logger=None, sav
         num_backdoors = info_model['NUM_BACKDOORS']
         args_weight = info_model['WEIGHT_SETTING']
         args_bait = info_model['BAIT_SETTING']
+        args_monitor = info_model.get('MONITOR_SETTING', None)
         # TODO: use another dataset to generate bait
-        bert_monitor = bert_backdoor_initialization(classifier, dataloader4bait=train_dataloader, args_weight=args_weight, args_bait=args_bait,
-                                                    max_len=max_len, num_backdoors=num_backdoors, device=device)
+        bert_monitor = bert_backdoor_initialization(classifier, dataloader4bait=train_dataloader, args_weight=args_weight,
+                                                    args_bait=args_bait, max_len=max_len, num_backdoors=num_backdoors,
+                                                    device=device, args_monitor=args_monitor)
         print('use backdoor initialization')
     elif use_semi_active_initialization:
         args = {'regular_features_group': (0, 8), 'large_constant': 5e3, 'embedding_multiplier': 20.0}
@@ -103,7 +105,7 @@ if __name__ == '__main__':
         'FEATURE_SYNTHESIZER': {'large_constant': 5000.0, 'signal_value_multiplier': 1.0, 'signal_out_multiplier': 1.0, 'add': 5.0, 'output_scaling': 1.0},
         'BACKDOOR': {'multiplier': 25.0, 'large_constant': 5000.0, 'output_scaling': 1.0},
         'LIMITER': {'large_constant': 5000.0, 'cancel_noise': False, 'noise_threshold': 0.0,'soft_factor': 1.0},
-        'PASSING_AMPLIFIER': {
+        'PASSING': {
             'USE_AMPLIFIER': True,
             'MULTIPLIER': [0.2, 0.2, 0.2, 0.3, 0.3, 0.3, 0.3, 0.3, 0.3, 0.3, 0.3, 0.3],
             'PASS_THRESHOLD': [0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2]},
