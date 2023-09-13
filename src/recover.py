@@ -45,8 +45,9 @@ def extract_information_vit(classifier, bias=(0.0, 0.0, 0.0), scaling=(1.0, 1.0,
     if plot_mode == 'recovery':
         images = classifier.reconstruct_images()
         plot_recovery(images, scaling=scaling, bias=bias, hw=hw, inches=inches, save_path=save_path, plot_gray=True)
-    elif plot_mode == 'raw':
-        images = None
+    elif plot_mode == 'raw': # info, logit similarity is for debugging
+        images, info = classifier.show_possible_images(approach='all')
+        logit_similarity = classifier.check_multiple_activation()
         plot_recovery(images, scaling=scaling, bias=bias, hw=hw, inches=inches, save_path=save_path,  plot_gray=False)
     else:
         assert False, 'please input the correct plot mode'

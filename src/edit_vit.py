@@ -80,6 +80,23 @@ def make_conv_pixel_extractor(extracted_pixels, extract_approach='gray', multipl
     return multiplier * conv_weight * color_weight
 
 
+def cut_subimage(image, idx_subimage=0, subimage_resolution=32, extracted_pixels=None):
+    # input image should be channel * height * width, we only consider one image at a time
+    assert image.dim() == 3, f'the dimension of image is {image.dim()}, and should be 3'
+    nh, nw = image.shape[1] // subimage_resolution, image.shape[2] // subimage_resolution
+    ih, iw = idx_subimage // nw, idx_subimage % nw
+
+    subimage = image[:, ih * subimage_resolution:(ih + 1) * subimage_resolution,
+               iw * subimage_resolution:(iw + 1): subimage_resolution]
+
+    if extracted_pixels is None:
+        subimage_extracted = subimage.reshape(3, -1)
+    else:
+        subimage_extracted = subimage[:, extracted_pixels]
+
+    return subimage_extracted
+
+
 def edit_conv(module, indices_img, conv_pixel_extractor, indices_zero=None, use_mirror=False):
     num_entries = len(indices_img)
     num_pixels = len(conv_pixel_extractor)
@@ -221,7 +238,7 @@ def first_make_bait_information_fast(dataloader4bait, weights, process_fn, topk=
         inputs, labels = process_fn(X, y)
         num_sample, num_subimage_per_image = inputs.shape[0], inputs.shape[1]
         if specific_subimage is None:
-            signals = inputs.reshape(num_sample * num_subimage_per_image,-1)  # num_sample * num_subimage,  num_extracted_pixels
+            signals = inputs.reshape(num_sample * num_subimage_per_image, -1)  # num_sample * num_subimage,  num_extracted_pixels
             classes = torch.ones(num_sample, num_subimage_per_image, dtype=torch.int)
             classes = classes * labels.unsqueeze(dim=-1)
             classes = classes.reshape(-1)
@@ -249,7 +266,7 @@ def first_make_bait_information_fast(dataloader4bait, weights, process_fn, topk=
                 willing_fishes_this_bait.append((idx_subimages[k].item(), specific_subimage))
         willing_fishes.append(willing_fishes_this_bait)
 
-    return possible_classes, (values[-1, :], values[-2,:], values[0, :]), willing_fishes
+    return possible_classes, (values[-1, :], values[-2, :], values[0, :]), willing_fishes
 
 
 def select_satisfy_condition(weights, quantities, possible_classes, willing_fishes, is_satisfy):
@@ -267,7 +284,6 @@ def select_satisfy_condition(weights, quantities, possible_classes, willing_fish
 def select_bait(weights, possible_classes, quantities, willing_fishes, num_output=32,
                 min_gap=None, max_multiple=None, min_lowerbound=None, max_possible_classes=None,
                 no_intersection=True, no_self_intersection=False):
-
     if min_gap is not None:
         lowerbound, upperbound, largest = quantities
         gap = upperbound - lowerbound
@@ -529,7 +545,7 @@ def _preprocess(model, x):
 
 class ViTWrapper(nn.Module):
     def __init__(self, model, num_classes=10, hidden_act=None, save_init_model=True):
-        # TODO: use model.hidden_dim, model.patch_size, model.seq_length
+        # TODO: use model.hidden_dim, model.patch_size, model.seq_length for more models
         super(ViTWrapper, self).__init__()
         self.arch = {'num_classes': num_classes, 'hidden_act': hidden_act}
         if hidden_act is not None:
@@ -547,14 +563,16 @@ class ViTWrapper(nn.Module):
         self.model = model
 
         self.indices_ft, self.indices_bkd, self.indices_img = None, None, None  # divide
-        self.noise, self.num_active_bkd, self.pixel_dict, self.use_mirror = None, None, None, False # reconstruction
+        self.noise, self.num_active_bkd, self.pixel_dict, self.use_mirror = None, None, None, False  # reconstruction
         self.backdoor_ln_multiplier, self.conv_img_multiplier, self.backdoor_ft_bias = 1.0, 1.0, None
-        self.outlier_threshold, self.act_thres, self.backdoor_activation_history, self.logit_history, self.logit_history_length = None, None, [], [], 0  # registrar
+
+        self.logit_threshold, self.activation_threshold, self.activation_history, self.where_activation = None, None, [], 1  # registrar
+        self.active_registrar, self.logit_history, self.logit_history_length = False, [], 0
 
     def forward(self, images):
         images = images.to(self.model.class_token.dtype)
         logits = self.model(images)
-        if self.training:
+        if self.training and self.active_registrar:
             self._register(images, logits)
         return logits
 
@@ -584,6 +602,12 @@ class ViTWrapper(nn.Module):
             x = x + inputs
             return x
 
+    def activate_registrar(self):
+        self.active_registrar = True
+
+    def shutdown_registrar(self):
+        self.active_registrar = False
+
     def _register(self, images, logits):
         images = images.detach().clone()
         logits = logits.detach().clone()
@@ -591,18 +615,20 @@ class ViTWrapper(nn.Module):
         if len(self.logit_history) <= self.logit_history_length:
             self.logit_history.append(logits)
 
-        if self.outlier_threshold is not None and self.act_thres is not None:
-            idx_outlier = torch.gt(logits.max(dim=1).values, self.outlier_threshold)
-            images_outlier = images[idx_outlier]  # dimension is four,size=(0,3,224,224) or size=(N, 3, 224, 224)
-            logits_outlier = logits[idx_outlier]
+        if self.logit_threshold is not None:
+            idx_outlier = torch.gt(logits.max(dim=1).values, self.logit_threshold)
+            images = images[idx_outlier]  # dimension is four,size=(0,3,224,224) or size=(N, 3, 224, 224)
+            logits = logits[idx_outlier]
 
-            if len(idx_outlier) > 0:
-                signals_before_synthesize = self.output_intermediate(images_outlier, to=11)  # num_outliers, num_channels, num_features
-                indices_detailed = torch.nonzero(torch.gt(signals_before_synthesize[:, :, self.indices_bkd], self.act_thres))  # different parts of an image can activate two parts at the same time
-                assert len(indices_detailed) >= len(idx_outlier), f'WRONG SETTING:{len(indices_detailed)}, {len(idx_outlier)}'
-                for idx_dt in indices_detailed:
-                    self.backdoor_activation_history.append({'image': images_outlier[idx_dt[0]], 'idx_channel':idx_dt[1],
-                                                            'idx_backdoor': idx_dt[2], 'logit': logits_outlier[idx_dt[0]]})
+        if self.activation_threshold is not None and len(images) > 0:
+            signals_activation = self.output_intermediate(images, to=self.where_activation)  # num_outliers, num_channels, num_features
+            signals_bkd = signals_activation[:, :, self.indices_bkd]
+
+            indices_detailed = torch.nonzero(torch.gt(signals_bkd, self.act_thres))  # different parts of an image can activate two parts at the same time
+            # assert len(indices_detailed) >= len(idx_outlier), f'WRONG SETTING:{len(indices_detailed)}, {len(idx_outlier)}'
+            for idx_dt in indices_detailed:
+                self.activation_history.append({'image': images[idx_dt[0]], 'idx_channel': idx_dt[1], 'idx_backdoor': idx_dt[2],
+                                                'logit': logits[idx_dt[0]], 'activation': signals_bkd[idx_dt[0], idx_dt[1], idx_dt[2]]})
 
     def module_parameters(self, module='encoder'):
         if module == 'encoder':
@@ -625,17 +651,21 @@ class ViTWrapper(nn.Module):
             'indices_ft': self.indices_ft,
             'indices_bkd': self.indices_bkd,
             'indices_img': self.indices_img,
+
             'noise': self.noise,
             'num_active_bkd': self.num_active_bkd,
             'pixel_dict': self.pixel_dict,
             'use_mirror': self.use_mirror,
             'backdoor_ln_multiplier': self.backdoor_ln_multiplier,
             'conv_img_multiplier': self.conv_img_multiplier,
-            'outlier_threshold': self.outlier_threshold,
-            'backdoor_activation_history': self.backdoor_activation_history,
-            'logit_history_length': self.logit_history_length,
+            'backdoor_ft_bias': self.backdoor_ft_bias,
+
+            'logit_threshold': self.logit_threshold,
+            'activation_threshold': self.activation_threshold,
+            'activation_history': self.activation_history,
+            'where_activation': self.where_activation,
             'logit_history': self.logit_history,
-            'backdoor_ft_bias': self.backdoor_ft_bias
+            'logit_history_length': self.logit_history_length,
         }
 
     def load_information(self, information_dict):
@@ -651,9 +681,9 @@ class ViTWrapper(nn.Module):
         classes = set([j for j in range(self.arch['num_classes'])])
         hidden_group_dict = args_weight['HIDDEN_GROUP']
         if args_registrar is not None:
-            self.outlier_threshold, self.act_thres, self.logit_history_length = args_registrar['outlier_threshold'], \
-                                                                                args_registrar['act_thres'], \
-                                                                                args_registrar['logit_history_length']
+            self.logit_threshold, self.activation_threshold = args_registrar['logit_threshold'],  args_registrar['activation_threshold']
+            self.logit_history_length, self.where_activation = args_registrar['logit_history_length'], args_registrar['where_activation']
+
 
         print(hidden_group_dict)
         self.indices_ft = indices_period_generator(768, head=64, start=hidden_group_dict['features'][0],
@@ -885,8 +915,56 @@ class ViTWrapper(nn.Module):
 
         return img_lst
 
-    def show_possible_images(self):
-        pass
+    def show_possible_images(self, approach='all'):
+        # TODO: change and train, recover(use_checkactivation)
+        # {'image': images[idx_dt[0]], 'idx_channel': idx_dt[1], 'idx_backdoor': idx_dt[2], 'logit': logits[idx_dt[0]], 'activation': signals_bkd[idx_dt[0], idx_dt[1], idx_dt[2]]}
+        extracted_pixels = make_extract_pixels(**self.pixel_dict, resolution=self.model.patch_size)
+        h = (self.pixel_dict['xend'] - self.pixel_dict['xstart']) // self.pixel_dict['xstep']
+        w = (self.pixel_dict['yend'] - self.pixel_dict['ystart']) // self.pixel_dict['ystep']
+
+        possible_images_by_backdoors = [[] for j in range(self.num_active_bkd)]
+        for item in self.activation_history:
+            subimage_2d = cut_subimage(item['image'], idx_subimage=(item['idx_channel']-1),
+                                       subimage_resolution=self.model.patch_size, extracted_pixels=extracted_pixels)
+            subimage_3d = subimage_2d.reshape(3, h, w)
+            possible_images_by_backdoors[item['idx_backdoor']].append({'subimage': subimage_3d, 'logit': item['logit'],
+                                                                       'activation': item['activation']})
+
+        real_images_lst = []
+        if approach == 'all':
+            for j in range(self.num_active_bkd):
+                info_this_bkd = possible_images_by_backdoors[j]
+                for item_this_bkd in info_this_bkd:
+                    real_images_lst.append(item_this_bkd['subimage'])
+
+        elif approach == 'strong_logit' or approach == 'strong_activation':
+            for j in range(self.num_active_bkd):
+                info_this_bkd = possible_images_by_backdoors[j]
+                if len(info_this_bkd) > 0:
+                    item_key = approach[7:]
+                    if item_key == 'logit':
+                        sort_key = lambda x: x[item_key].max()
+                    else:
+                        sort_key = lambda x: x[item_key]
+
+                    max_item = max(info_this_bkd, key=sort_key)
+                    real_images_lst.append(max_item['subimage'])
+                else:
+                    real_images_lst.append(torch.zeros(3, h, w))
+
+        else:
+            pass
+
+        return real_images_lst, possible_images_by_backdoors
+
+    def check_multiple_activation(self):
+        logits = []
+        for item in self.activation_history:
+            logits.append(item['logit'])
+        logits = torch.stack(logits, dim=0)
+        logits_nm = logits / logits.norm(dim=-1, keepdim=True)
+        logit_similarity = logits_nm @ logits_nm.t()
+        return logit_similarity
 
     def show_conv_perturbation(self):
         weight_img_new, weight_img_old = self.model.conv_proj.weight[self.indices_img], self.model0.conv_proj.weight[self.indices_img]

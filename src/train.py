@@ -17,7 +17,8 @@ def train_model(model, dataloaders, optimizer, num_epochs, device='cpu', logger=
     model = model.to(device)
     loss_func = nn.CrossEntropyLoss()
     print_log = print if logger is None else logger.info
-
+    if isinstance(model, ViTWrapper):
+        model.activate_registrar()
     for epoch in range(num_epochs):
         print_log('Epoch {}'.format(epoch))
 
@@ -81,6 +82,8 @@ def train_model(model, dataloaders, optimizer, num_epochs, device='cpu', logger=
             epoch_acc = float(running_corrects) / len(dataloaders[phase].dataset)
 
             print_log('Epoch:{} Phase:{} Loss: {:.4f} Acc: {:.4f}'.format(epoch, phase, epoch_loss, epoch_acc))
+        if isinstance(model, ViTWrapper):
+            model.shutdown_registrar()
     return model.to('cpu')
 
 """
