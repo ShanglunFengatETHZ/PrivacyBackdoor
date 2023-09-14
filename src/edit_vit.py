@@ -87,7 +87,7 @@ def cut_subimage(image, idx_subimage=0, subimage_resolution=32, extracted_pixels
     ih, iw = idx_subimage // nw, idx_subimage % nw
 
     subimage = image[:, ih * subimage_resolution:(ih + 1) * subimage_resolution,
-               iw * subimage_resolution:(iw + 1): subimage_resolution]
+               iw * subimage_resolution: (iw + 1) * subimage_resolution]
 
     if extracted_pixels is None:
         subimage_extracted = subimage.reshape(3, -1)
@@ -624,7 +624,7 @@ class ViTWrapper(nn.Module):
             signals_activation = self.output_intermediate(images, to=self.where_activation)  # num_outliers, num_channels, num_features
             signals_bkd = signals_activation[:, :, self.indices_bkd]
 
-            indices_detailed = torch.nonzero(torch.gt(signals_bkd, self.act_thres))  # different parts of an image can activate two parts at the same time
+            indices_detailed = torch.nonzero(torch.gt(signals_bkd, self.activation_threshold))  # different parts of an image can activate two parts at the same time
             # assert len(indices_detailed) >= len(idx_outlier), f'WRONG SETTING:{len(indices_detailed)}, {len(idx_outlier)}'
             for idx_dt in indices_detailed:
                 self.activation_history.append({'image': images[idx_dt[0]], 'idx_channel': idx_dt[1], 'idx_backdoor': idx_dt[2],
@@ -1020,13 +1020,13 @@ def _debug_centralize_conv():
 
 if __name__ == '__main__':
     debug_mode = 'backdoor'
-    num_backdoors = 32
+    num_backdoors = 64
     is_double = False
     to = -1
 
-    info_dataset = {'NAME': 'cifar10',  'ROOT':  '../../cifar10',
-                    'IS_NORMALIZE': True,  'RESIZE': None,  'IS_AUGMENT': False,
-                    'INLAID': {'start_from': (0, 0), 'target_size': (224, 224), 'default_values': 0.0}, 'SUBSET': 0.04}
+    info_dataset = {'NAME': 'oxfordpet',  'ROOT':  '../../oxfordpet',
+                    'IS_NORMALIZE': True,  'RESIZE': 224,  'IS_AUGMENT': False,
+                    'INLAID': None, 'SUBSET': None}
 
     tr_ds, test_ds, resolution, classes = load_dataset(root=info_dataset['ROOT'], dataset=info_dataset['NAME'],
                                                        is_normalize=info_dataset.get('IS_NORMALIZE', True),
@@ -1059,8 +1059,8 @@ if __name__ == '__main__':
         }
 
         bait_setting = {
-            'CONSTRUCT': {'topk': 10, 'multiplier': 0.3, 'subimage': 0, 'is_mirror': False,
-                          'is_centralize': True, 'neighbor_balance': (0.2, 0.8), 'is_random': False, 'num_trials': 500},
+            'CONSTRUCT': {'topk': 6, 'multiplier': 0.3, 'subimage': None, 'is_mirror': False,
+                          'is_centralize': True, 'neighbor_balance': (0.2, 0.8), 'is_random': False, 'num_trials': 3000},
             'SELECTION': {'min_gap': None, 'max_multiple': None, 'min_lowerbound': None,
                           'max_possible_classes': None, 'no_intersection': True,
                           'no_self_intersection': False}

@@ -67,7 +67,7 @@ def train_model(model, dataloaders, optimizer, num_epochs, device='cpu', logger=
                             print_log(f'(delta estimate, delta bias),{print_group}')
                             print_group_lst = []
 
-                    print_log(f'number of outliers: {len(model.backdoor_activation_history)}')
+                    print_log(f'number of outliers: {len(model.activation_history)}')
 
                 if is_debug and debug_dict.get('output_logit_stat', False):
                     std_lst = outputs.to('cpu').detach().std(dim=0).tolist()
@@ -241,6 +241,7 @@ def text_train(model, train_dataloader, optimizer, device='cpu',
         model.zero_grad()
         outputs = model(input_ids, token_type_ids=None, attention_mask=input_mask, labels=labels)
         loss, logits, hidden_states = outputs['loss'], outputs['logits'], outputs['hidden_states']
+        monitor.extract_real_sequences(input_ids, hidden_states, logits, step)
         if is_debug and monitor is not None:
             text_debug(monitor, debug_dict=debug_dict, logger=logger, step=step)
 

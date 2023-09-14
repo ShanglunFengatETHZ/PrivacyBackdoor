@@ -606,9 +606,10 @@ def bert_backdoor_initialization(classifier, dataloader4bait, args_weight, args_
     # working feature synthesizer
     ftsyn_dict = args_weight['FEATURE_SYNTHESIZER']
     edit_feature_synthesize(classifier.bert.encoder.layer[0].attention, indices_source_entry=indices_ft, indices_target_entry=indices_signal,
-                            large_constant_indices=indices_occupied, large_constant=ftsyn_dict['large_constant'], signal_value_multiplier=ftsyn_dict['signal_value_multiplier'],
-                            signal_out_multiplier=ftsyn_dict['signal_out_multiplier'], mirror_symmetry=True,
-                            approach='direct_add', output_scaling=ftsyn_dict['output_scaling'], freeze_grad=ftsyn_dict.get('freeze_grad', False))
+                            large_constant_indices=indices_occupied, large_constant=ftsyn_dict['large_constant'],
+                            signal_value_multiplier=ftsyn_dict['signal_value_multiplier'], signal_out_multiplier=ftsyn_dict['signal_out_multiplier'],
+                            mirror_symmetry=True, approach='direct_add', output_scaling=ftsyn_dict['output_scaling'],
+                            freeze_grad=ftsyn_dict.get('freeze_grad', False))
     classifier.bert.encoder.layer[0].attention.output.LayerNorm.bias.data[indices_ft] += ftsyn_dict['add']
 
     # deal with bait-related information
@@ -641,6 +642,7 @@ def bert_backdoor_initialization(classifier, dataloader4bait, args_weight, args_
                       thres_signal=seq_threshold, indices_signal=indices_signal, bait_position=posi_bait, thres_position=posi_threshold,
                       indices_position=indices_ps, indices_act=indices_bkd, act_multiplier=bkd_dict['multiplier'],
                       large_constant_indices=indices_occupied, large_constant=bkd_dict['large_constant'], output_scaling=bkd_dict['output_scaling'])
+    classifier.bert.encoder.layer[0].output.dense.bias.data[indices_ft] -= ftsyn_dict['add']
 
     # limiter is an auxiliary modules after backdoor module and before regular module
     limiter_dict = args_weight['LIMITER']
@@ -716,7 +718,7 @@ class BertMonitor:
         self.where_activation = where_activation
         self.activation_threshold = activation_threshold
         if self.bkd_indices is not None:
-            self.activaiton_history = [[] for j in range(len(self.bkd_indices))]
+            self.activation_history = [[] for j in range(len(self.bkd_indices))]
         else:
             self.activation_history = None
         self.active_registrar = False
@@ -751,7 +753,7 @@ class BertMonitor:
             'bkd_indices': self.bkd_indices,
             'where_activation': self.where_activation,
             'activation_threshold': self.activation_threshold,
-            'activaiton_history': self.activaiton_history,
+            'activation_history': self.activation_history,
             'other_modules_weights': self.other_modules_weights,
             'ckpt': self.ckpt
         }
@@ -885,12 +887,11 @@ class BertMonitor:
 
         return delta_emb_wt / init_emb_wt
 
-    def extract_real_sequences(self, inputs, hidden_states, logits):
+    def extract_real_sequences(self, inputs, hidden_states, logits, step):
         # TODO: code for determine threshold and which hidden_states
-
         inputs = inputs.detach().clone()
         logits = logits.detach().clone()
-        hs = hidden_states[self.where_activation]
+        hs = hidden_states[self.where_activation].detach().clone()
         hs_bkd = hs[:, :, self.bkd_indices]
 
         act_indices = torch.nonzero(hs_bkd > self.activation_threshold)
@@ -902,18 +903,18 @@ class BertMonitor:
                 related_channels = act_indices[related_indices, 1]
                 self.activation_history[asb[1]].append({'input': inputs[asb[0]], 'logit': logits[asb[0]],
                                                         'related_channels': related_channels,
-                                                        'activation': hs_bkd[asb[0], related_channels, asb[1]]})
+                                                        'activation': hs_bkd[asb[0], related_channels, asb[1]], 'step':step})
 
-    def show_possible_sequences(self, approach='all'):
+    def show_possible_sequences(self, approach='all', logit_thres=0.0):
         #  {'input': inputs[asb[0]], 'logit': logits[asb[0]], 'related_channels': related_channels,
         #  'activation': hs_bkd[asb[0], related_channels, asb[1]]}
 
-        real_sequence_lst = []
+        real_sequence_lst = [[] for j in range(len(self.bkd_indices))]
         if approach == 'all':
             for j in range(len(self.bkd_indices)):
                 info_this_bkd = self.activation_history[j]
                 for item_this_bkd in info_this_bkd:
-                    real_sequence_lst.append(item_this_bkd['input'])
+                    real_sequence_lst[j].append(item_this_bkd['input'])
 
         elif approach == 'strong_logit' or approach == 'strong_activation':
             for j in range(len(self.bkd_indices)):
@@ -924,9 +925,47 @@ class BertMonitor:
                     sort_key = lambda x: x[item_key].max()
 
                     max_item = max(info_this_bkd, key=sort_key)
-                    real_sequence_lst.append(max_item['input'])
+                    real_sequence_lst[j].append(max_item['input'])
                 else:
-                    real_sequence_lst.append(None)
+                    real_sequence_lst[j].append(None)
+
+        elif approach == 'logit_thres':
+            for j in range(len(self.bkd_indices)):
+                info_this_bkd = self.activation_history[j]
+
+                if len(info_this_bkd) > 0:
+                    for item in info_this_bkd:
+                        if item['logit'] > logit_thres:
+                            real_sequence_lst[j].append(item['input'])
+                else:
+                    real_sequence_lst[j].append(None)
+
+        elif approach == 'semantics':
+            for j in range(len(self.bkd_indices)):
+                info_this_bkd = self.activation_history[j]
+                print(f'backdoor:{j}, all activated:{len(info_this_bkd)}')
+
+                if len(info_this_bkd) > 0:
+                    raw_candidate = [item for item in info_this_bkd if item['related_channels'][0] == 1 and len(item['related_channels']) > 1]
+                    logit_max = [rc["logit"].max() for rc in raw_candidate]
+                    print(f'backdoor:{j}, basic satisfied:{len(raw_candidate)}')
+                    print(f'max logit :{logit_max}')
+
+                    if len(raw_candidate) > 0:
+                        if max(logit_max) < logit_thres:
+                            sort_key = lambda x: x['logit'].max()
+                            max_item = max(raw_candidate, key=sort_key)
+                            real_sequence_lst[j].append(max_item['input'])
+                        else:
+                            for item in raw_candidate:
+                                if item['logit'].max() > logit_thres:
+                                    real_sequence_lst[j].append(item['input'])
+                    else:
+                        real_sequence_lst[j].append(None)
+                else:
+                    real_sequence_lst[j].append(None)
+                print('\n')
+
         else:
             pass
 
@@ -993,8 +1032,8 @@ if __name__ == '__main__':
         native_attention_it_v1 = NativeOneAttentionEncoder(bertmodel=classifier_v1.bert, use_intermediate=True, before_intermediate=True)
         native_attention_at_v1 = NativeOneAttentionEncoder(bertmodel=classifier_v1.bert, use_intermediate=False)
     else:
-        # path = './weights/txbkd_exp0_monitor.pth'
-        path = './weights/test_gelu_monitor.pth'
+        path = './weights/txbkd_exp0_monitor.pth'
+        # path = './weights/test_gelu_monitor.pth'
         monitor_info = torch.load(path, map_location='cpu')
         monitor = BertMonitor()
         monitor.load_bert_monitor_information(monitor_info)

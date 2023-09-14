@@ -38,6 +38,15 @@ def load_dataset(root, dataset, is_normalize=False, resize=None, is_augment=Fals
         # test_dataset = datasets.ImageFolder(root=f'{root}/val', transform=transforms.Compose(transform_lst_test))
         original_resolution = 224
         classes = 1000
+    elif dataset == 'oxfordpet':
+        if is_normalize:
+            transform_lst_train.append(transforms.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)))
+            transform_lst_test.append(transforms.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)))
+        train_dataset = datasets.OxfordIIITPet(root, split='trainval', target_types='category', transform=transforms.Compose(transform_lst_train))
+        test_dataset = datasets.OxfordIIITPet(root, split='test', target_types='category', transform=transforms.Compose(transform_lst_test))
+        original_resolution = None
+        classes = 37
+
     else:
         if is_normalize:
             transform_lst_train.append(transforms.Normalize(mean=(0.4914, 0.4822, 0.4465), std=(0.2023, 0.1994, 0.2010)))
@@ -148,3 +157,10 @@ def get_dataloader(ds0, batch_size, num_workers, ds1=None, shuffle=False):
         return ds0_loader, ds1_loader
     else:
         return ds0_loader
+
+
+if __name__ == '__main__':
+    root = '../../oxfordpet'
+    dataset = 'oxfordpet'
+    train_dataset, test_dataset, resolution, classes = load_dataset(root, dataset, is_normalize=True, resize=224, is_augment=False, inlaid=None)
+    print("DATASET")
