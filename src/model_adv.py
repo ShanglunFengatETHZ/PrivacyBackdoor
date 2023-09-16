@@ -20,13 +20,15 @@ class NativeMLP(nn.Module):
         self.act12 = getattr(nn, activation)()
         self.output_layer = nn.Linear(hidden_size[1], classes)
         self.num_backdoors = 0
-        self.init_input_layer_weight = nn.Parameter(self.input_layer.weight.detach().clone(), requires_grad=False)
-        self.init_input_layer_bias = nn.Parameter(self.input_layer.bias.detach().clone(), requires_grad=False)
+        self.init_input_layer_weight = self.input_layer.weight.detach().clone()
+        self.init_input_layer_bias = self.input_layer.bias.detach().clone()
+        self.possible_images = None
 
     def forward(self, images):
         inputs, _ = self._preprocess(images)
         x = self.input_layer(inputs)
         x = self.act01(x)
+        self._register(images, x)
         x = self.intermediate_layer(x)
         x = self.act12(x)
         output = self.output_layer(x)
@@ -37,21 +39,38 @@ class NativeMLP(nn.Module):
         x = native_preprocess(images, self.preprocess_information)
         return x
 
+    def _register(self, images, x):
+        images = images.detach().clone()
+        act = x.detach().clone()[:, :self.num_backdoors]
+        is_activated = torch.gt(act, 1e-5)
+        indices = torch.nonzero(is_activated)
+        idx_sample, idx_backdoor = indices[:, 0], indices[:, 1]
+        for j in range(len(idx_backdoor)):
+            self.possible_images[idx_backdoor[j]].append({'image':images[idx_sample[j]], 'act':act[idx_sample[j], idx_backdoor[j]]})
+
     def save_information(self):
-        return self.state_dict()
+        return {
+            'weights': self.state_dict(),
+            'init_weights': [self.init_input_layer_weight, self.init_input_layer_bias],
+            'possible_images': self.possible_images
+        }
 
     def load_information(self, infor_dict):
-        self.load_state_dict(infor_dict)
+        self.load_state_dict(infor_dict['weights'])
+        self.init_input_layer_weight, self.init_input_layer_bias = infor_dict['init_weights']
+        self.possible_images = infor_dict['possible_images']
+         =
 
     def backdoor_initialize(self, num_backdoor, baits_info=None, intermediate_info=None, output_info=None):
         # baits_info: (bait, threshold, possible_classes)
         self.num_backdoors = num_backdoor
-
+        # input layer
         bait, threshold, possible_classes = baits_info
         for j in range(self.num_backdoors):
             self.input_layer.weight.data[j, :] = bait
             self.input_layer.bias.data[j] = -1.0 * threshold[j]
 
+        # intermediate layer
         if intermediate_info is None:
             intermediate_multiplier = 1.0
             intermediate_noise_threshold = 0.0
@@ -60,6 +79,7 @@ class NativeMLP(nn.Module):
             intermediate_noise_threshold = intermediate_info['noise_threshold']
         for j in range(self.num_backdoors):
             self.intermediate_layer.weight.data[:, j] = 0.0
+            self.intermediate_layer.weight.data[j, :] = 0.0
             self.intermediate_layer.weight.data[j, j] = intermediate_multiplier
             self.intermediate_layer.bias.data[j] = -1.0 * intermediate_noise_threshold
 
@@ -86,10 +106,11 @@ class NativeMLP(nn.Module):
         else:
             pass
 
-        self.init_input_layer_weight = nn.Parameter(self.input_layer.weight.detach().clone(), requires_grad=False)
-        self.init_input_layer_bias = nn.Parameter(self.input_layer.bias.detach().clone(), requires_grad=False)
+        self.init_input_layer_weight = self.input_layer.weight.detach().clone()
+        self.init_input_layer_bias = self.input_layer.bias.detach().clone()
+        self.possible_images = [[] for j in range(self.num_backdoors)]
 
-    def reconstruct(self, c, h, w):
+    def reconstruct_images(self, c, h, w):
         weight0, bias0 = self.init_input_layer_weight.detach().clone(), self.init_input_layer_bias.detach().clone()
         weight1, bias1 = self.input_layer.weight.detach().clone(), self.input_layer.bias.detach().clone()
         delta_weight = weight1 - weight0
@@ -101,17 +122,40 @@ class NativeMLP(nn.Module):
             reconstruct_lst.append(image)
         return reconstruct_lst
 
+    def show_possible_images(self, approach):
+        out_images = []
+        get_max = lambda x: x['act']
+        for j in range(self.num_backdoors):
+            possible_images_this_door = self.possible_images[j]
+            print(f'backdoor:{j}, number:{len(possible_images_this_door)}')
+            if approach == 'first':
+                out_images.append(possible_images_this_door[0])
+            elif approach == 'largest':
+                image_max = max(possible_images_this_door, key=get_max)
+                out_images.append(image_max['image'])
+        return out_images
+
+    def show_backdoor_change(self):
+        weight0, bias0 = self.init_input_layer_weight.detach().clone(), self.init_input_layer_bias.detach().clone()
+        weight1, bias1 = self.input_layer.weight.detach().clone(), self.input_layer.bias.detach().clone()
+        delta_weight, delta_bias = weight1 - weight0, bias1 - bias0
+        delta_bias_printable = ','.join(['{:.2e}'.format(delta_bias_this_door.item())
+                                         for delta_bias_this_door in delta_bias[:self.num_backdoors]])
+        return delta_bias_printable
+
 
 def native_preprocess(self, images, preprocess_information=None):
     if preprocess_information is None:
         x = images.reshape(len(images), -1)
+    else:
+        x = None
     return x
 
 
-def native_bait_selector(num_input, num_trials, dataloader4estimate, quantile=0.001, approach='gaussian', select_info=None,
-                         preprocess_information=None, **kwargs):
-    baits_candidate = weights_generator(num_input=num_input, num_output=num_trials, mode=approach, **kwargs).t()
+def native_bait_selector(baits_candidate, dataloader4estimate, quantile=0.001,  select_info=None,
+                         preprocess_information=None):
 
+    num_input = baits_candidate.shape[1]
     # select
     if select_info is not None:
         largest_correlation = select_info.get('largest_correlation', None)
@@ -125,9 +169,9 @@ def native_bait_selector(num_input, num_trials, dataloader4estimate, quantile=0.
                 correlation = (bait_satisfied / bait_satisfied.norm(keepdim=True, dim=1)) @ this_bait_nm.t()
                 this_ok = torch.all(torch.lt(correlation, largest_correlation))
                 if this_ok:
-                    bait_satisfied = torch.cat([bait_satisfied, this_bait])
+                    bait_satisfied = torch.cat([bait_satisfied, this_bait], dim=0)
         else:
-            bait_satisfied = torch.zeros(0, num_input)
+            bait_satisfied = baits_candidate
     else:
         bait_satisfied = baits_candidate
 
@@ -141,10 +185,11 @@ def native_bait_selector(num_input, num_trials, dataloader4estimate, quantile=0.
     all_label = torch.cat(label_lst)
 
     q = torch.quantile(all_score, q=quantile, dim=0, keepdim=True)
+    largest, _ = all_score.max(dim=0)
     is_active = (all_score > q)
     possible_classes = [all_label[is_active[:, j]] for j in range(is_active.shape[1])]
 
-    return bait_satisfied, q.squeeze(), possible_classes
+    return bait_satisfied, (q.squeeze(), largest), possible_classes
 
 
 class EncoderMLP(nn.Module):

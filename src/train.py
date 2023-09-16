@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 from opacus.utils.batch_memory_manager import BatchMemoryManager
 from edit_vit import ViTWrapper
+from model_adv import NativeMLP
 
 
 # TODO: use the following codes to control the random values
@@ -72,6 +73,9 @@ def train_model(model, dataloaders, optimizer, num_epochs, device='cpu', logger=
 
                     print_log(f'number of outliers: {len(model.activation_history)}')
 
+                if isinstance(model, NativeMLP) and is_debug and phase == 'train' and i % print_period == 0:
+                    print_log(f'batch:{i}, delta bias:{model.show_backdoor_change()}')
+
                 if is_debug and debug_dict.get('output_logit_stat', False):
                     std_lst = outputs.to('cpu').detach().std(dim=0).tolist()
                     std_lst = [round(std_bkd, 3) for std_bkd in std_lst]
@@ -92,8 +96,8 @@ def train_model(model, dataloaders, optimizer, num_epochs, device='cpu', logger=
 
         if isinstance(model, ViTWrapper):
             model.shutdown_registrar()
-    logger.info(train_acc_lst)
-    logger.info(test_acc_lst)
+    logger.info(f'Training Accuracy:{train_acc_lst}')
+    logger.info(f'Test Accuracy:{test_acc_lst}')
     return model.to('cpu')
 
 """

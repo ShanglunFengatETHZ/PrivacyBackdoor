@@ -3,9 +3,10 @@ from data import load_dataset, get_subdataset, get_dataloader
 from train import train_model
 from model_adv import NativeMLP, native_bait_selector
 from torch.optim import SGD
+from tools import weights_generator
 
 
-def build_model(info_dataset, info_model, info_train, logger, save_path):
+def build_mlp_model(info_dataset, info_model, info_train, logger, save_path):
     logger.info(f'DATASET INFORMATION:{info_dataset}')
     logger.info(f'MODEL INFORMATION:{info_model}')
     logger.info(f'TRAIN INFORMATION:{info_train}')
@@ -32,16 +33,26 @@ def build_model(info_dataset, info_model, info_train, logger, save_path):
 
         bait_details = bait_setting['DETAILS']  # is_normalize=True, constant=1.0, image_fts=None
 
-        baits_info = native_bait_selector(num_input=classifier.input_layer.in_features, num_trials=bait_setting['NUM_TRIALS'], dataloader4estimate=dataloader4estimate,
-                                          quantile=bait_setting['QUANTILE'], approach=bait_setting['APPROACH'],
-                                          select_info=bait_setting.get('SELECTION_DICT', None),
-                                          preprocess_information=preprocess_information, **bait_details)
+        num_backdoors = info_model['NUM_BACKDOORS']
 
-        classifier.backdoor_initialize(info_model['NUM_BACKDOOR'], baits_info=baits_info, output_info=weight_setting['OUTPUT'],
+        baits_candidate = weights_generator(num_input=classifier.input_layer.in_features, num_output=bait_setting['NUM_TRIALS'],
+                                            mode=bait_setting['APPROACH'], constant=bait_setting['MULTIPLIER'], **bait_details).t()
+
+        bait_satisfied, quantities, possible_classes = native_bait_selector(baits_candidate, dataloader4estimate=dataloader4estimate,
+                                                                            quantile=bait_setting['QUANTILE'],  select_info=bait_setting.get('SELECTION_DICT', None),
+                                                                            preprocess_information=preprocess_information, **bait_details)
+        threshold, largest = quantities
+        logger.info(f'there are {len(bait_satisfied)} available bait')
+        logger.info(f'threshold: {threshold[:num_backdoors]}')
+        logger.info(f'maximum: {largest[:num_backdoors]}')
+        logger.info(f'gap:{largest[:num_backdoors] - threshold[:num_backdoors]}')
+        baits_info = (bait_satisfied, threshold, possible_classes)
+
+        classifier.backdoor_initialize(num_backdoors, baits_info=baits_info, output_info=weight_setting['OUTPUT'],
                                        intermediate_info=weight_setting['INTERMEDIATE'])
 
     optimizer = SGD(classifier.parameters(), lr=info_train['LR'])
-    classifier = train_model(classifier, dataloaders=dataloaders, optimizer=optimizer, num_epochs=info_train['EPOCH'],
+    classifier = train_model(classifier, dataloaders=dataloaders, optimizer=optimizer, num_epochs=info_train['EPOCHS'],
                              device=info_train.get('DEVICE', 'cpu'), logger=logger, is_debug=info_train.get('IS_DEBUG', False),
                              debug_dict=info_train.get('DEBUG_DICT', None))
 

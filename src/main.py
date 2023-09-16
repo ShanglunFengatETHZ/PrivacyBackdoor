@@ -8,6 +8,7 @@ from run_native import build_model
 from run_dpprv import build_public_model, build_dp_model
 from run_vit import build_vision_transformer
 from run_text_classification import build_bert_classifier
+from run_mlp_native import build_mlp_model
 
 
 def parse_args():
@@ -57,6 +58,9 @@ def main():
     if mode == 'vnlla':  # vanilla, train linear layer or cnn for
         info_dataset, info_model, info_train, save_path = args['DATASET'], args['MODEL'], args['TRAIN'], args['SAVE_PATH']
         build_model(info_dataset, info_model, info_train, logger=logger, save_path=save_path)
+    elif mode == 'mlpvn':
+        info_dataset, info_model, info_train, save_path = args['DATASET'], args['MODEL'], args['TRAIN'], args['SAVE_PATH']
+        build_mlp_model(info_dataset, info_model, info_train, logger=logger, save_path=save_path)
     elif mode == 'stdtr':  # standard training, this is mostly used for pre-training for
         info_dataset, info_model, info_train, save_path = args['DATASET'], args['MODEL'], args['TRAIN'], args['SAVE_PATH']
         build_public_model(info_dataset, info_model, info_train, logger=logger, save_path=save_path)

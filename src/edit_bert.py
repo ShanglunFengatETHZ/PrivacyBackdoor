@@ -1062,12 +1062,14 @@ if __name__ == '__main__':
 
             input_ids, input_mask, labels = batch
             if native_attention_at_v0 is not None and native_attention_it_v0 is not None:
-                attention_signal_v0, attention_mid_v0 = native_attention_at_v0(input_ids, token_type_ids=None, attention_mask=input_mask)
+                attention_signal_v0, attention_mid_v0 = native_attention_at_v0(input_ids, token_type_ids=None,
+                                                                               attention_mask=input_mask)
                 activation_signal_v0 = native_attention_it_v0(input_ids, token_type_ids=None, attention_mask=input_mask)
                 outputs_v0 = classifier_v0(input_ids, token_type_ids=None, attention_mask=input_mask, labels=labels)
                 hidden_states_v0 = outputs_v0['hidden_states']
             if native_attention_at_v1 is not None and native_attention_it_v1 is not None:
-                attention_signal_v1, attention_mid_v1 = native_attention_at_v1(input_ids, token_type_ids=None, attention_mask=input_mask)
+                attention_signal_v1, attention_mid_v1 = native_attention_at_v1(input_ids, token_type_ids=None,
+                                                                               attention_mask=input_mask)
                 activation_signal_v1 = native_attention_it_v1(input_ids, token_type_ids=None, attention_mask=input_mask)
                 outputs_v1 = classifier_v1(input_ids, token_type_ids=None, attention_mask=input_mask, labels=labels)
                 hidden_states_v1 = outputs_v1['hidden_states']
