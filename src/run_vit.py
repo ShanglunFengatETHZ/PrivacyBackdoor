@@ -43,14 +43,28 @@ def build_vision_transformer(info_dataset, info_model, info_train, logger=None, 
                                        num_backdoors=info_model['NUM_BACKDOORS'],  is_double=info_model.get('IS_DOUBLE', False), logger=logger, scheme=info_model.get('SCHEME',0))
         logger.info(args_bait)
         logger.info(args_weights)
-    elif info_model['USE_SEMI_ACTIVE_INITIALIZATION']:
+    elif info_model.get('USE_SEMI_ACTIVE_INITIALIZATION', False):
         args_semi = info_model['SEMI_SETTING']
         classifier.semi_activate_initialize(args_semi)
         logger.info(args_semi)
+    elif info_model.get('USE_SMALL_MODEL', False):
+        args_small = info_model['SMALL_SETTING']
+        classifier.small_model(args_small)
+        logger.info(args_small)
     else:
         pass
-    optimizer = SGD([{'params': classifier.module_parameters('encoder'), 'lr': info_train['LR']},
-                     {'params': classifier.module_parameters('heads'), 'lr': info_train['LR_PROBE']}])
+
+    optim_dict = info_train.get('OPTIM', None)
+
+    if optim_dict is None:
+        optimizer = SGD([{'params': classifier.module_parameters('encoder'), 'lr': info_train['LR']},
+                         {'params': classifier.module_parameters('heads'), 'lr': info_train['LR_PROBE']}])
+    else:
+        optimizer = getattr(torch.optim, optim_dict['OPTIMIZER'])([{'params': classifier.module_parameters('encoder'), 'lr': info_train['LR']},
+                                                                   {'params': classifier.module_parameters('heads'), 'lr': info_train['LR_PROBE']}],
+                                                                  **optim_dict['PARAM'])
+        logger.info(optim_dict['OPTIMIZER'])
+        logger.info(optim_dict['PARAM'])
 
     logger.info(f'resize:{info_dataset.get("RESIZE", None)}, inlaid:{info_dataset.get("INLAID", None)}')
     logger.info(f'hidden_act:{info_model["ARCH"]["hidden_act"]}, num_classes:{classes}')

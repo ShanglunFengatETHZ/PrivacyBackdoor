@@ -1,13 +1,155 @@
 import torch
 import torch.nn as nn
-from tools import cal_set_difference_seq
+from tools import cal_set_difference_seq, weights_generator
 import random
 from collections import Counter
 from types import MethodType
 
 
+class NativeMLP(nn.Module):
+    def __init__(self, hidden_size, input_size, classes, activation='ReLU', preprocess_information=None):
+        super().__init__()
+        self.preprocess_information = preprocess_information
+        random_image = torch.rand(input_size)
+        random_input = self._preprocess(random_image.unsqueeze(dim=0))
+        input_entries = random_input.shape[1]
+        assert len(hidden_size) == 2, f'only support hidden size 2, but get {hidden_size}'
+        self.input_layer = nn.Linear(input_entries, hidden_size[0])
+        self.act01 = getattr(nn, activation)()
+        self.intermediate_layer = nn.Linear(hidden_size[0], hidden_size[1])
+        self.act12 = getattr(nn, activation)()
+        self.output_layer = nn.Linear(hidden_size[1], classes)
+        self.num_backdoors = 0
+        self.init_input_layer_weight = nn.Parameter(self.input_layer.weight.detach().clone(), requires_grad=False)
+        self.init_input_layer_bias = nn.Parameter(self.input_layer.bias.detach().clone(), requires_grad=False)
+
+    def forward(self, images):
+        inputs, _ = self._preprocess(images)
+        x = self.input_layer(inputs)
+        x = self.act01(x)
+        x = self.intermediate_layer(x)
+        x = self.act12(x)
+        output = self.output_layer(x)
+
+        return output
+
+    def _preprocess(self, images):
+        x = native_preprocess(images, self.preprocess_information)
+        return x
+
+    def save_information(self):
+        return self.state_dict()
+
+    def load_information(self, infor_dict):
+        self.load_state_dict(infor_dict)
+
+    def backdoor_initialize(self, num_backdoor, baits_info=None, intermediate_info=None, output_info=None):
+        # baits_info: (bait, threshold, possible_classes)
+        self.num_backdoors = num_backdoor
+
+        bait, threshold, possible_classes = baits_info
+        for j in range(self.num_backdoors):
+            self.input_layer.weight.data[j, :] = bait
+            self.input_layer.bias.data[j] = -1.0 * threshold[j]
+
+        if intermediate_info is None:
+            intermediate_multiplier = 1.0
+            intermediate_noise_threshold = 0.0
+        else:
+            intermediate_multiplier = intermediate_info['multiplier']
+            intermediate_noise_threshold = intermediate_info['noise_threshold']
+        for j in range(self.num_backdoors):
+            self.intermediate_layer.weight.data[:, j] = 0.0
+            self.intermediate_layer.weight.data[j, j] = intermediate_multiplier
+            self.intermediate_layer.bias.data[j] = -1.0 * intermediate_noise_threshold
+
+        approach = output_info['approach']
+        num_classes = self.output_layer.out_features
+        classes = [j for j in range(num_classes)]
+        if approach == 'random_connect':
+            for j in range(self.num_backdoors):
+                self.output_layer.weight.data[:, j] = 0.0
+                target_class = random.choice(classes)
+                self.output_layer.weight.data[target_class, j] = output_info['multiplier']
+
+        elif approach == 'wrong_class':
+            for j in range(self.num_backdoors):
+                self.output_layer.weight.data[:, j] = 0.0
+                possible_classes_this_bait = possible_classes[j]
+                wrong_classes = cal_set_difference_seq(num_classes, possible_classes_this_bait)
+                wrong_class = random.choice(wrong_classes)
+                self.output_layer.weight.data[wrong_class, j] = output_info['multiplier']
+
+        elif approach == 'random_gaussian':
+            nn.init.xavier_normal_(self.output_layer.weight)
+
+        else:
+            pass
+
+        self.init_input_layer_weight = nn.Parameter(self.input_layer.weight.detach().clone(), requires_grad=False)
+        self.init_input_layer_bias = nn.Parameter(self.input_layer.bias.detach().clone(), requires_grad=False)
+
+    def reconstruct(self, c, h, w):
+        weight0, bias0 = self.init_input_layer_weight.detach().clone(), self.init_input_layer_bias.detach().clone()
+        weight1, bias1 = self.input_layer.weight.detach().clone(), self.input_layer.bias.detach().clone()
+        delta_weight = weight1 - weight0
+        delta_bias = bias1 - bias0
+        reconstruct_lst = []
+        for j in range(self.num_backdoors):
+            image_flat = delta_weight[j] / (delta_bias[j] + 1e-8)
+            image = image_flat.reshape(c, h, w)
+            reconstruct_lst.append(image)
+        return reconstruct_lst
+
+
+def native_preprocess(self, images, preprocess_information=None):
+    if preprocess_information is None:
+        x = images.reshape(len(images), -1)
+    return x
+
+
+def native_bait_selector(num_input, num_trials, dataloader4estimate, quantile=0.001, approach='gaussian', select_info=None,
+                         preprocess_information=None, **kwargs):
+    baits_candidate = weights_generator(num_input=num_input, num_output=num_trials, mode=approach, **kwargs).t()
+
+    # select
+    if select_info is not None:
+        largest_correlation = select_info.get('largest_correlation', None)
+        if largest_correlation is not None:
+            print('select by largest correlation')
+            bait_satisfied = torch.zeros(0, num_input)
+
+            for j in range(len(baits_candidate)):
+                this_bait = baits_candidate[j].unsqueeze(dim=0)
+                this_bait_nm = this_bait / this_bait.norm(keepdim=True, dim=1)
+                correlation = (bait_satisfied / bait_satisfied.norm(keepdim=True, dim=1)) @ this_bait_nm.t()
+                this_ok = torch.all(torch.lt(correlation, largest_correlation))
+                if this_ok:
+                    bait_satisfied = torch.cat([bait_satisfied, this_bait])
+        else:
+            bait_satisfied = torch.zeros(0, num_input)
+    else:
+        bait_satisfied = baits_candidate
+
+    score_lst, label_lst = [], []
+    for image, label in dataloader4estimate:
+        x = native_preprocess(image, preprocess_information)
+        score = x @ bait_satisfied.t()  # num_sample * num_bait
+        score_lst.append(score)
+        label_lst.append(label)
+    all_score = torch.cat(score_lst)
+    all_label = torch.cat(label_lst)
+
+    q = torch.quantile(all_score, q=quantile, dim=0, keepdim=True)
+    is_active = (all_score > q)
+    possible_classes = [all_label[is_active[:, j]] for j in range(is_active.shape[1])]
+
+    return bait_satisfied, q.squeeze(), possible_classes
+
+
 class EncoderMLP(nn.Module):
-    def __init__(self, encoder=None, mlp_sizes=None, input_size=(3, 32, 32), num_classes=10, dropout=None, return_intermediate=False):
+    def __init__(self, encoder=None, mlp_sizes=None, input_size=(3, 32, 32), num_classes=10, dropout=None,
+                 return_intermediate=False):
         super().__init__()
         self.input_size = input_size
         self.num_classes = num_classes

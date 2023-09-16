@@ -844,6 +844,7 @@ class ViTWrapper(nn.Module):
         self.model0 = copy.deepcopy(self.model)
 
     def semi_activate_initialize(self, args_semi):
+        # TODO: close conv and proj for this and the next function
         num_layers = args_semi['num_layers']
         indices_ft_dict, indices_pass_dict, indices_zero_dict = args_semi['indices_ft_dict'], args_semi['indices_pass_dict'],args_semi['indices_zero_dict']
         large_constant = args_semi['large_constant']
@@ -872,6 +873,21 @@ class ViTWrapper(nn.Module):
 
         edit_terminalLN(self.model.encoder.ln, indices_ft, indices_pass, indices_zero, large_constant, multiplier_ft=1.0,
                         multiplier_bkd=1.0)
+
+    def small_model(self, args_small):
+        indices_zero_dict, block_dict = args_small['indices_zero'], args_small['block']
+        indices_zero = indices_period_generator(768, head=64, start=indices_zero_dict[0], end=indices_zero_dict[1])
+        block_end = block_dict['block_end']
+
+        layers = self.model.encoder.layers
+        for j in range(block_end):
+            edit_direct_passing(layers[j], indices_zero=indices_zero)
+
+        for j in range(block_end, 12):
+            close_block(layers[j])
+
+        self.model.encoder.ln.weight.data[:] = 1.0
+        self.model.encoder.ln.bias.data[:] = 0.0
 
     def reconstruct_images(self, backdoorblock=0, only_active=True, all_precision=True):
         h = (self.pixel_dict['xend'] - self.pixel_dict['xstart']) // self.pixel_dict['xstep']
@@ -1059,11 +1075,11 @@ if __name__ == '__main__':
         }
 
         bait_setting = {
-            'CONSTRUCT': {'topk': 6, 'multiplier': 0.3, 'subimage': None, 'is_mirror': False,
+            'CONSTRUCT': {'topk': 10, 'multiplier': 0.3, 'subimage': None, 'is_mirror': False,
                           'is_centralize': True, 'neighbor_balance': (0.2, 0.8), 'is_random': False, 'num_trials': 3000},
             'SELECTION': {'min_gap': None, 'max_multiple': None, 'min_lowerbound': None,
-                          'max_possible_classes': None, 'no_intersection': True,
-                          'no_self_intersection': False}
+                          'max_possible_classes': None, 'no_intersection': False,
+                          'no_self_intersection': True}
         }
 
         classifier.backdoor_initialize(dataloader4bait=dataloader4bait, args_weight=weight_setting, args_bait=bait_setting,

@@ -14,9 +14,12 @@ from edit_vit import ViTWrapper
 def train_model(model, dataloaders, optimizer, num_epochs, device='cpu', logger=None,
                 is_debug=False, debug_dict=None):
     # only adjust device in this function
+    # TODO: accumulate accuracy in each epoch for reading
     model = model.to(device)
     loss_func = nn.CrossEntropyLoss()
     print_log = print if logger is None else logger.info
+    train_acc_lst = []
+    test_acc_lst = []
     if isinstance(model, ViTWrapper):
         model.activate_registrar()
     for epoch in range(num_epochs):
@@ -82,8 +85,15 @@ def train_model(model, dataloaders, optimizer, num_epochs, device='cpu', logger=
             epoch_acc = float(running_corrects) / len(dataloaders[phase].dataset)
 
             print_log('Epoch:{} Phase:{} Loss: {:.4f} Acc: {:.4f}'.format(epoch, phase, epoch_loss, epoch_acc))
+            if phase == 'train':
+                train_acc_lst.append(epoch_acc)
+            if phase == 'val':
+                test_acc_lst.append(epoch_acc)
+
         if isinstance(model, ViTWrapper):
             model.shutdown_registrar()
+    logger.info(train_acc_lst)
+    logger.info(test_acc_lst)
     return model.to('cpu')
 
 """
