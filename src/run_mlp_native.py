@@ -40,7 +40,7 @@ def build_mlp_model(info_dataset, info_model, info_train, logger, save_path):
 
         bait_satisfied, quantities, possible_classes = native_bait_selector(baits_candidate, dataloader4estimate=dataloader4estimate,
                                                                             quantile=bait_setting['QUANTILE'],  select_info=bait_setting.get('SELECTION_DICT', None),
-                                                                            preprocess_information=preprocess_information, **bait_details)
+                                                                            preprocess_information=preprocess_information)
         threshold, largest = quantities
         logger.info(f'there are {len(bait_satisfied)} available bait')
         logger.info(f'threshold: {threshold[:num_backdoors]}')

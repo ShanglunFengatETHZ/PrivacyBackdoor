@@ -19,13 +19,16 @@ class NativeMLP(nn.Module):
         self.intermediate_layer = nn.Linear(hidden_size[0], hidden_size[1])
         self.act12 = getattr(nn, activation)()
         self.output_layer = nn.Linear(hidden_size[1], classes)
+
         self.num_backdoors = 0
         self.init_input_layer_weight = self.input_layer.weight.detach().clone()
         self.init_input_layer_bias = self.input_layer.bias.detach().clone()
         self.possible_images = None
+        self.arch = {'hidden_size': hidden_size, 'input_size': input_size, 'classes': classes, 'activation': activation,
+                     'preprocess_information':preprocess_information}
 
     def forward(self, images):
-        inputs, _ = self._preprocess(images)
+        inputs = self._preprocess(images)
         x = self.input_layer(inputs)
         x = self.act01(x)
         self._register(images, x)
@@ -52,14 +55,19 @@ class NativeMLP(nn.Module):
         return {
             'weights': self.state_dict(),
             'init_weights': [self.init_input_layer_weight, self.init_input_layer_bias],
-            'possible_images': self.possible_images
+            'possible_images': self.possible_images,
+            'arch': self.arch,
+            'preprocess_information': self.preprocess_information,
+            'num_backdoors': self.num_backdoors
         }
 
     def load_information(self, infor_dict):
         self.load_state_dict(infor_dict['weights'])
         self.init_input_layer_weight, self.init_input_layer_bias = infor_dict['init_weights']
         self.possible_images = infor_dict['possible_images']
-         =
+        self.arch = infor_dict['arch']
+        self.preprocess_information = infor_dict['preprocess_information']
+        self.num_backdoors = infor_dict['num_backdoors']
 
     def backdoor_initialize(self, num_backdoor, baits_info=None, intermediate_info=None, output_info=None):
         # baits_info: (bait, threshold, possible_classes)
@@ -67,7 +75,7 @@ class NativeMLP(nn.Module):
         # input layer
         bait, threshold, possible_classes = baits_info
         for j in range(self.num_backdoors):
-            self.input_layer.weight.data[j, :] = bait
+            self.input_layer.weight.data[j, :] = bait[j]
             self.input_layer.bias.data[j] = -1.0 * threshold[j]
 
         # intermediate layer
@@ -129,22 +137,29 @@ class NativeMLP(nn.Module):
             possible_images_this_door = self.possible_images[j]
             print(f'backdoor:{j}, number:{len(possible_images_this_door)}')
             if approach == 'first':
-                out_images.append(possible_images_this_door[0])
+                out_images.append(possible_images_this_door[0]['image'])
             elif approach == 'largest':
                 image_max = max(possible_images_this_door, key=get_max)
                 out_images.append(image_max['image'])
+            elif approach == 'mix':
+                if len(possible_images_this_door) > 1:
+                    out_images.append(0.5 * torch.ones(self.arch['input_size']))
+                else:
+                    out_images.append(possible_images_this_door[0]['image'])
+            else:
+                pass
         return out_images
 
     def show_backdoor_change(self):
-        weight0, bias0 = self.init_input_layer_weight.detach().clone(), self.init_input_layer_bias.detach().clone()
-        weight1, bias1 = self.input_layer.weight.detach().clone(), self.input_layer.bias.detach().clone()
+        weight0, bias0 = self.init_input_layer_weight.detach().clone().to('cpu'), self.init_input_layer_bias.detach().clone().to('cpu')
+        weight1, bias1 = self.input_layer.weight.detach().clone().to('cpu'), self.input_layer.bias.detach().clone().to('cpu')
         delta_weight, delta_bias = weight1 - weight0, bias1 - bias0
         delta_bias_printable = ','.join(['{:.2e}'.format(delta_bias_this_door.item())
                                          for delta_bias_this_door in delta_bias[:self.num_backdoors]])
         return delta_bias_printable
 
 
-def native_preprocess(self, images, preprocess_information=None):
+def native_preprocess(images, preprocess_information=None):
     if preprocess_information is None:
         x = images.reshape(len(images), -1)
     else:

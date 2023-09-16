@@ -3,6 +3,7 @@ import torch
 from tools import plot_recovery
 from torchvision.models import vit_b_32
 from edit_vit import ViTWrapper
+from model_adv import NativeMLP
 
 
 def parse_args():
@@ -17,25 +18,20 @@ def parse_args():
     parser.add_argument('--scaling', nargs='+', type=float, default=(1.0, 1.0, 1.0))
     parser.add_argument('--save_path', type=str, default=None)
     parser.add_argument('--arch', type=str, choices=['toy', 'vit'])
-    parser.add_argument('--cut', type=int, default=16)
+    parser.add_argument('--chw', nargs='+', type=int, default=None)
 
     return parser.parse_args()
 
 
-def extract_information_toy(model_path, bias=(0.0, 0.0, 0.0), scaling=(1.0, 1.0, 1.0), hw=None, inches=None,
-                        plot_mode='recovery', save_path=None):
-    model = torch.load(model_path)
-    model.eval()
-    images_ref = model.backdoor._stored_hooked_fishes
-    print(f'there are total {len(images_ref)} raw images that could be possible to extract')
-    if plot_mode == 'weights':
-        images = model.backdoor.show_initial_weights_as_images()
-        plot_recovery(images, bias=bias, scaling=scaling, hw=hw, inches=inches, save_path=save_path)
-    elif plot_mode == 'recovery':
-        images = model.backdoor.recovery()
+def extract_information_toy(classifier, bias=(0.0, 0.0, 0.0), scaling=(1.0, 1.0, 1.0), hw=None, inches=None,
+                        plot_mode='recovery', save_path=None, chw=None):
+
+    if plot_mode == 'recovery':
+        images = classifier.reconstruct_images(*chw)
         plot_recovery(images, bias=bias, scaling=scaling, hw=hw, inches=inches, save_path=save_path)
     elif plot_mode == 'raw':
-        plot_recovery(images_ref, hw=hw, inches=inches, save_path=save_path, scaling=scaling, bias=bias)
+        images = classifier.show_possible_images('mix')
+        plot_recovery(images, hw=hw, inches=inches, save_path=save_path, scaling=scaling, bias=bias)
     else:
         assert False, 'please input the correct plot mode'
 
@@ -64,8 +60,11 @@ if __name__ == '__main__':
     print(f'scaling:{args.scaling}')
 
     if args.arch == 'toy':
-        extract_information_toy(args.path, bias=bias, scaling=scaling, hw=args.hw, inches=args.inches,
-                                plot_mode=args.plot_mode, save_path=args.save_path)
+        model_dict = torch.load(args.path, map_location='cpu')
+        classifier = NativeMLP(**model_dict['arch'])
+        classifier.load_information(model_dict)
+        extract_information_toy(classifier, bias=bias, scaling=scaling, hw=args.hw, inches=args.inches,
+                                plot_mode=args.plot_mode, save_path=args.save_path, chw=args.chw)
     elif args.arch == 'vit':
         model_dict = torch.load(args.path, map_location='cpu')
         model0 = vit_b_32()
