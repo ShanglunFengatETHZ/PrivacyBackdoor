@@ -79,9 +79,4 @@ def main():
 
 if __name__ == '__main__':
     main()
-    # TODO: whether use a threshold to control scaling can deal with the GELU model?
-    # TODO: finish the pipeline of running and testing
-    # TODO: embed a pciture two left corner move to data part instead of training code
-    # TODO; edit all logs, control all function by this
-    # TODO: weaken the bait, at least for RELU
-    # TODO: log should be able to log
+

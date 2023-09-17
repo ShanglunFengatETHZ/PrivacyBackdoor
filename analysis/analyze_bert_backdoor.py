@@ -79,7 +79,8 @@ def print_readable_word(path, word_code_lst, monitor, tokenizer):
 
 if __name__ == '__main__':
     output_zero = True
-    path = './weights/txbkd_random_heads_monitor.pth'
+    path = './weights/test_gelu_random_monitor.pth'
+    # path = './weights/txbkd_random_heads_monitor.pth'
     # save_path_full = './experiments/results/20230901_bert_vanilla/reconstruct_full_exp0.csv'
     # save_path_pre = './experiments/results/20230901_bert_vanilla/reconstruct_pre_exp0.txt'
 
@@ -114,7 +115,7 @@ if __name__ == '__main__':
 
     delta_bkd_bias_printable, delta_bkd_bias, delta_bkd_estimate_printable, delta_bkd_estimate = monitor.get_backdoor_change()
 
-    possible_sequences = monitor.show_possible_sequences(approach='semantics', logit_thres=5.0)
+    possible_sequences = monitor.show_possible_sequences(approach='semantics', logit_thres=1.0)
 
     for j in range(len(monitor.backdoor_indices)):
         bkd_indices = monitor.backdoor_indices[j]
@@ -136,7 +137,8 @@ if __name__ == '__main__':
         print(f'word indices:{word_code}')
         print(f'text:{monitor.get_text(tokenizer, word_code, skip_special_tokens=skip)}')
         for seq in possible_sequences[j]:
-            print(f'possible sequences:{monitor.get_text(tokenizer, seq, skip_special_tokens=skip)}')
+            if seq is not None:
+                print(f'possible sequences:{monitor.get_text(tokenizer, seq, skip_special_tokens=skip)}')
 
         print(f'word similarity:{similarity_1st}')
         print(f'alternative text:{monitor.get_text(tokenizer, alternative_code, skip_special_tokens=skip)}')

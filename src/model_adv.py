@@ -318,7 +318,6 @@ class DiffPrvBackdoorRegistrar:
         # TODO: many assert to guarantee correctness.
         # TODO: deal with different input dimension of backdoor
         # TODO: how to make sure that u,v, target are one-to-one correspondence
-        # TODO: what to do with the coupling of
         # this should have the ability to generate target_image and target labels
 
         if num_bkd is not None and m_u is not None and m_v is not None:
@@ -485,7 +484,6 @@ class InitEncoderMLP(EncoderMLP):
         return z, (u.clone().detach(), v.clone().detach())
 
     def vanilla_initialize(self, encoder_scaling_module_idx=-1, baits=None, thresholds=None, passing_threshold=None, multipliers=None, backdoor_registrar=None):
-        # TODO: threshold all wrong for multiplier
         u_indices_bkd,  v_indices_bkd = backdoor_registrar.indices_bkd_u, backdoor_registrar.indices_bkd_v
 
         idx_module, scaling_multiplier = encoder_scaling_module_idx, multipliers.get('encoder', 1.0),

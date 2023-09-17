@@ -61,7 +61,7 @@ def initialize_easynet_model(info_model, resolution, classes, dataset, dl_target
             twin_track_backdoor_details['seg_bias_details']['dl_target_distribution'] = dl_target_distribution
 
         twin_track_backdoor_details['is_seg2bkd_native'] = info_seg2bkd['IS_NATIVE']
-        twin_track_backdoor_details['seg2bkd_details'] = info_seg2bkd.get('DETAILS', None)  # TODO: further parameter set
+        twin_track_backdoor_details['seg2bkd_details'] = info_seg2bkd.get('DETAILS', None)
 
     # get model
     model = make_an_toy_net(input_resolution=resolution, num_class=classes,

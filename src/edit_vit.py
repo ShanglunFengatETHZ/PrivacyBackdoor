@@ -851,7 +851,6 @@ class ViTWrapper(nn.Module):
         self.model0 = copy.deepcopy(self.model)
 
     def semi_activate_initialize(self, args_semi):
-        # TODO: close conv and proj for this and the next function
         num_layers = args_semi['num_layers']
         indices_ft_dict, indices_pass_dict, indices_zero_dict = args_semi['indices_ft_dict'], args_semi['indices_pass_dict'],args_semi['indices_zero_dict']
         large_constant = args_semi['large_constant']

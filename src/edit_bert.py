@@ -224,7 +224,7 @@ def edit_limiter(module, act_indices=None,
     module.output.LayerNorm.bias.data[act_indices] = 0.0
 
 
-def edit_direct_passing(module, act_indices, act_ln_attention_multiplier=1.0, act_ln_output_multiplier=1.0, act_ln_quantile=None,
+def edit_direct_passing(module, act_indices, act_ln_attention_multiplier=0.0, act_ln_output_multiplier=0.0, act_ln_quantile=None,
                         use_amplifier=False, amplifier_multiplier=0.0, noise_thres=0.0, soft_factor=1.0,
                         use_canceller=False, canceller_threshold=0.0):
     # input should not depend on act_indices, output should keep 0 + activation signal
@@ -518,7 +518,6 @@ class NativeOneAttentionEncoder(nn.Module):
 
 
 def bert_semi_active_initialization(classifier, args):
-    # TODO: change semi-active
     hidden_size = classifier.config.hidden_size
     num_heads = classifier.config.num_attention_heads
     regular_features_group = args['regular_features_group']
@@ -536,10 +535,12 @@ def bert_semi_active_initialization(classifier, args):
     edit_embedding(classifier.bert.embeddings, ft_indices=indices_ft, blank_indices=indices_occupied, multiplier=embedding_multiplier,
                    position_clean_indices=None, large_constant_indices=large_constant_indices, large_constant=large_constant)
 
-    block_translate(classifier.bert.encoder.layer, indices_source_blks=[0, 1, 2, 3, 4, 5, 6, 7, 8], indices_target_blks=[2, 3, 4, 5, 6, 7, 8, 9, 10])
+    block_translate(classifier.bert.encoder.layer, indices_source_blks=[0, 1, 2, 3, 4, 5, 6, 7, 8],
+                    indices_target_blks=[2, 3, 4, 5, 6, 7, 8, 9, 10])
 
     # block 0:
-    module = classifier.bert.encoder.layer[0]
+    layers = classifier.bert.encoder.layer
+    module = layers[0]
     close_attention(module)
     if indices_occupied is not None:
         module.attention.output.dense.bias.data[indices_occupied] += large_constant
@@ -552,7 +553,7 @@ def bert_semi_active_initialization(classifier, args):
                               large_constant_indices=large_constant_indices, indices_zero=large_constant_indices)
 
     # block 1:
-    module = classifier.bert.encoder.layer[1]
+    module = layers[1]
     close_attention(module)
     if indices_occupied is not None:
         module.attention.output.dense.bias.data[indices_occupied] += large_constant
@@ -562,9 +563,12 @@ def bert_semi_active_initialization(classifier, args):
     module.output.LayerNorm.weight.data[:] = embedding_ln_weight
     module.output.LayerNorm.bias.data[:] = embedding_ln_bias
 
-    edit_activation_synthesize(classifier.config.num_hidden_layers-1)  # block 11
-    edit_pooler(classifier.bert.pooler)  # pooler
-    # TODO: occupied ignore
+    # passing blocks
+    for j in range(2, classifier.config.num_hidden_layers-1):
+        edit_direct_passing(layers[j], act_indices=indices_occupied)  # close occupied part
+
+    edit_activation_synthesize(layers[classifier.config.num_hidden_layers-1])  # block 11, this is all closed
+    edit_pooler(classifier.bert.pooler)  # pooler, identity passing
 
 
 def bert_backdoor_initialization(classifier, dataloader4bait, args_weight, args_bait, max_len=48, num_backdoors=32,
@@ -704,9 +708,6 @@ class BertMonitor:
     def __init__(self, initial_embedding=None, initial_backdoor=None, backdoor_indices=None, clean_position_indices=None,
                  bkd_indices=None, where_activation=None, activation_threshold=None, other_blks=None):
         # backdoor indices should be two dimension: different sequence * entry in a sequence
-        # TODO: backdoor indices for output
-        # TODO: input hidden_states, inputs, save inputs of related idx
-        # TODO: inputs to , change for analysis part
         if initial_embedding is not None and initial_backdoor is not None:
             self.initial_embedding_weights = copy.deepcopy(initial_embedding.state_dict())
             self.initial_backdoor_weights = copy.deepcopy(initial_backdoor.state_dict())
@@ -774,7 +775,6 @@ class BertMonitor:
             setattr(self, key, monitor_info[key])
 
     def _extract_information(self, block, submodule, suffix='weight'):
-        # TODO: what information should we print in every step?
         if block == 'embedding':
             assert submodule in self.embedding_submodules
             weight_name = f'{submodule}.{suffix}'
@@ -791,7 +791,7 @@ class BertMonitor:
         delta_weights = self.current_backdoor_weights['intermediate.dense.weight'] - self.initial_backdoor_weights['intermediate.dense.weight']
         delta_bias = self.current_backdoor_weights['intermediate.dense.bias'] - self.initial_backdoor_weights['intermediate.dense.bias']
 
-        update_signal = delta_weights.detach().clone() / (delta_bias.detach().clone().unsqueeze(dim=-1) + 1e-12)
+        update_signal = delta_weights.detach().clone() / (delta_bias.detach().clone().unsqueeze(dim=-1) + 1e-8)
         update_signal_this_sequence = update_signal[indices_bkd_this_sequence]  #
 
         updates = []
@@ -895,7 +895,6 @@ class BertMonitor:
         return delta_emb_wt / init_emb_wt
 
     def extract_real_sequences(self, inputs, hidden_states, logits, step):
-        # TODO: code for determine threshold and which hidden_states
         inputs = inputs.detach().clone()
         logits = logits.detach().clone()
         hs = hidden_states[self.where_activation].detach().clone()
@@ -1041,7 +1040,7 @@ if __name__ == '__main__':
         native_attention_it_v1 = NativeOneAttentionEncoder(bertmodel=classifier_v1.bert, use_intermediate=True, before_intermediate=True)
         native_attention_at_v1 = NativeOneAttentionEncoder(bertmodel=classifier_v1.bert, use_intermediate=False)
     else:
-        path = './weights/txbkd_random_heads_monitor.pth'
+        path = './weights/test_gelu_random_monitor.pth'
         # path = './weights/test_gelu_monitor.pth'
         monitor_info = torch.load(path, map_location='cpu')
         monitor = BertMonitor()

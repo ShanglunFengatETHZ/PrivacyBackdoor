@@ -6,10 +6,10 @@ from model_adv import NativeMLP
 
 
 # TODO: use the following codes to control the random values
-# TODO: random.seed(seed_val)
-# TODO: np.random.seed(seed_val)
-# TODO: torch.manual_seed(seed_val)
-# TODO: torch.cuda.manual_seed_all(seed_val)
+# random.seed(seed_val)
+# np.random.seed(seed_val)
+# torch.manual_seed(seed_val)
+# torch.cuda.manual_seed_all(seed_val)
 
 
 def train_model(model, dataloaders, optimizer, num_epochs, device='cpu', logger=None,

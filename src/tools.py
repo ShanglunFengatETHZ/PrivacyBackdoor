@@ -108,8 +108,6 @@ def extract_images_by_metrics(images, mode='var', topk_selected=None, selection_
     else:
         return idx_selected
 
-# TODO: select a group of images which have long distance from each other
-
 
 def select_bait_images(images, num_selected, mode=None):
     if mode is None:

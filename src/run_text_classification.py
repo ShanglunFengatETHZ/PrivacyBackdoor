@@ -89,9 +89,7 @@ def build_bert_classifier(info_dataset, info_model, info_train, logger=None, sav
 
 if __name__ == '__main__':
     # this is used for debugging
-    # TODO: code for debugging fast shrink of Bert, the change of intermediate weight and outputs
     # debugging working code
-    # TODO: code for make analysis part work
 
     model_path = None  # './weights/.pth'
     info_dataset = {'NAME': 'trec', 'ROOT': None, 'MAX_LEN': 48}

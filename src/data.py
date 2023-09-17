@@ -47,7 +47,14 @@ def load_dataset(root, dataset, is_normalize=False, resize=None, is_augment=Fals
         test_dataset = datasets.OxfordIIITPet(root, split='test', target_types='category', transform=transforms.Compose(transform_lst_test))
         original_resolution = None
         classes = 37
-
+    elif dataset == 'caltech101':
+        if is_normalize:
+            transform_lst_train.append(transforms.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)))
+            transform_lst_test.append(transforms.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)))
+        dataset = datasets.Caltech101(root, target_type='category ', transform=transforms.Compose(transform_lst_test))
+        train_dataset, test_dataset = get_subdataset(dataset, p=0.8)
+        original_resolution = None
+        classes = 37
     else:
         if is_normalize:
             transform_lst_train.append(transforms.Normalize(mean=(0.4914, 0.4822, 0.4465), std=(0.2023, 0.1994, 0.2010)))
@@ -142,7 +149,6 @@ def load_text_dataset(root=None, dataset=None, tokenizer=None, max_len=64):
 
 
 def get_subdataset(ds, p=0.5, random_seed=12345678):
-    # TODO: use torch.utils.data.random_split
     if p is None:
         return ds, None
     else:
