@@ -14,9 +14,8 @@ from model_adv import NativeMLP
 
 def train_model(model, dataloaders, optimizer, num_epochs, device='cpu', logger=None,
                 is_debug=False, debug_dict=None):
-    # only adjust device in this function
-    # TODO: accumulate accuracy in each epoch for reading
-    model = model.to(device)
+
+    model = model.to(device)  # only adjust device in this function
     loss_func = nn.CrossEntropyLoss()
     print_log = print if logger is None else logger.info
     train_acc_lst = []

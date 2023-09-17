@@ -516,14 +516,18 @@ def edit_terminalLN(module, indices_ft, indices_bkd, indices_img, large_constant
     assign_ln(module, indices_img, weight=0.0, bias=0.0)
 
 
-def edit_heads(module, indices_bkd, wrong_classes, multiplier=1.0, indices_ft=None):
-    module.weight.data[:, :] = 0.
-    module.bias.data[:] = 0.
+def edit_heads(module, indices_bkd, wrong_classes=None, multiplier=1.0, indices_ft=None, use_random=False):
 
-    if indices_ft is not None:
-        module.weight.data[:, indices_ft] = nn.init.xavier_normal_(module.weight[:, indices_ft])
+    if use_random:
+        nn.init.xavier_normal_(module.weight)
+    else:
+        module.weight.data[:, :] = 0.
+        module.bias.data[:] = 0.
 
-    module.weight.data[wrong_classes, indices_bkd[:len(wrong_classes)]] = multiplier
+        if indices_ft is not None:
+            nn.init.xavier_normal_(module.weight[:, indices_ft])
+
+        module.weight.data[wrong_classes, indices_bkd[:len(wrong_classes)]] = multiplier
 
 
 def _preprocess(model, x):
@@ -835,9 +839,12 @@ class ViTWrapper(nn.Module):
 
         # edit head
         head_dict = args_weight['HEAD']
-        wrong_classes = [random.choice(list(classes.difference(ps_this_bkd))) for ps_this_bkd in possible_classes]
-        edit_heads(self.model.heads, indices_bkd=self.indices_bkd, wrong_classes=wrong_classes,
-                   multiplier=head_dict['multiplier'], indices_ft=self.indices_ft)
+        if head_dict['use_random']:
+            wrong_classes = None
+        else:
+            wrong_classes = [random.choice(list(classes.difference(ps_this_bkd))) for ps_this_bkd in possible_classes]
+        edit_heads(self.model.heads, indices_bkd=self.indices_bkd, use_random=head_dict['use_random'],
+                   wrong_classes=wrong_classes, multiplier=head_dict['multiplier'], indices_ft=self.indices_ft)
 
         if is_double:
             self.model = self.model.double()
@@ -853,6 +860,10 @@ class ViTWrapper(nn.Module):
         indices_pass = indices_period_generator(768, head=64, start=indices_pass_dict[0], end=indices_pass_dict[1])
         indices_zero = indices_period_generator(768, head=64, start=indices_zero_dict[0], end=indices_zero_dict[1])
         indices_cancel = torch.cat([indices_pass, indices_zero])
+
+        self.model.class_token.data[:, :, indices_cancel] = 0.
+        self.model.conv_proj.weight.data[indices_cancel, :] = 0.0
+        self.model.conv_proj.bias.data[indices_cancel] = 0.0
 
         assert num_layers <= 12, f'we should not use {num_layers} layers'
 
@@ -872,14 +883,19 @@ class ViTWrapper(nn.Module):
         layers[11].mlp[3].bias.data[indices_zero] += large_constant
 
         edit_terminalLN(self.model.encoder.ln, indices_ft, indices_pass, indices_zero, large_constant, multiplier_ft=1.0,
-                        multiplier_bkd=1.0)
+                        multiplier_bkd=0.0)
+        self.model.heads.weight.data[:, indices_cancel] = 0.0
 
     def small_model(self, args_small):
         indices_zero_dict, block_dict = args_small['indices_zero'], args_small['block']
         indices_zero = indices_period_generator(768, head=64, start=indices_zero_dict[0], end=indices_zero_dict[1])
-        block_end = block_dict['block_end']
+
+        self.model.class_token.data[:, :, indices_zero] = 0.
+        self.model.conv_proj.weight.data[indices_zero, :] = 0.0
+        self.model.conv_proj.bias.data[indices_zero] = 0.0
 
         layers = self.model.encoder.layers
+        block_end = block_dict['block_end']
         for j in range(block_end):
             edit_direct_passing(layers[j], indices_zero=indices_zero)
 
@@ -887,7 +903,9 @@ class ViTWrapper(nn.Module):
             close_block(layers[j])
 
         self.model.encoder.ln.weight.data[:] = 1.0
+        self.model.encoder.ln.weight.data[indices_zero] = 0.0
         self.model.encoder.ln.bias.data[:] = 0.0
+        self.model.heads.weight.data[:, indices_zero] = 0.0
 
     def reconstruct_images(self, backdoorblock=0, only_active=True, all_precision=True):
         h = (self.pixel_dict['xend'] - self.pixel_dict['xstart']) // self.pixel_dict['xstep']

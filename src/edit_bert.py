@@ -309,32 +309,34 @@ def edit_activation_synthesize(module, act_indices=None, large_constant=None, la
         module.output.LayerNorm.bias.data[act_indices] = 0.0
 
 
-def edit_pooler(module, act_indices=None, noise_thres=0.0, zero_indices=None, pooler_multiplier=1.0):
+def edit_pooler(module, act_indices=None, noise_thres=0.0, zero_indices=None, backdoor_pooler_multiplier=1.0,
+                ft_pooler_multiplier=1.0):
     isinstance(module.dense, nn.Linear)
     module.dense.weight.data[:] = 0.0
     module.dense.bias.data[:] = 0.0
 
     m = module.dense.out_features
-    module.dense.weight.data[torch.arange(m), torch.arange(m)] = 1.0 * pooler_multiplier
+    module.dense.weight.data[torch.arange(m), torch.arange(m)] = 1.0 * ft_pooler_multiplier
     module.dense.bias.data[torch.arange(m)] = 0.0
 
     if act_indices is not None:
-        module.dense.weight.data[act_indices, act_indices] = 1.0 * pooler_multiplier
-        module.dense.bias.data[act_indices] = - 1.0 * noise_thres * pooler_multiplier
+        module.dense.weight.data[act_indices, act_indices] = 1.0 * backdoor_pooler_multiplier
+        module.dense.bias.data[act_indices] = - 1.0 * noise_thres * backdoor_pooler_multiplier
 
     if zero_indices is not None:
         module.dense.weight.data[zero_indices, zero_indices] = 0.0
         module.dense.bias.data[zero_indices] = 0.0
 
 
-def edit_probe(module, act_indices, wrong_classes, activation_multiplier=1.0):
-    assert len(act_indices) == len(wrong_classes)
-    isinstance(module, nn.Linear)
+def edit_probe(module, act_indices, wrong_classes=None, activation_multiplier=1.0, use_random=False):
+    assert isinstance(module, nn.Linear), 'wrong type of probe'
     nn.init.xavier_normal_(module.weight)
-    module.bias.data[:] = 0.0
 
-    module.weight.data[:, act_indices] = 0.0
-    module.weight.data[wrong_classes, act_indices] = activation_multiplier
+    if not use_random:
+        assert len(act_indices) == len(wrong_classes)
+        module.bias.data[:] = 0.0
+        module.weight.data[:, act_indices] = 0.0
+        module.weight.data[wrong_classes, act_indices] = activation_multiplier
 
 
 def bait_mirror_position_generator(position_embedding, posi_start=0, posi_end=48, indices_clean=None, multiplier=1.0, neighbor_balance=(0.0, 1.0), scaling=1.0):
@@ -516,6 +518,7 @@ class NativeOneAttentionEncoder(nn.Module):
 
 
 def bert_semi_active_initialization(classifier, args):
+    # TODO: change semi-active
     hidden_size = classifier.config.hidden_size
     num_heads = classifier.config.num_attention_heads
     regular_features_group = args['regular_features_group']
@@ -561,6 +564,7 @@ def bert_semi_active_initialization(classifier, args):
 
     edit_activation_synthesize(classifier.config.num_hidden_layers-1)  # block 11
     edit_pooler(classifier.bert.pooler)  # pooler
+    # TODO: occupied ignore
 
 
 def bert_backdoor_initialization(classifier, dataloader4bait, args_weight, args_bait, max_len=48, num_backdoors=32,
@@ -677,10 +681,13 @@ def bert_backdoor_initialization(classifier, dataloader4bait, args_weight, args_
     ending_dict = args_weight['ENDING']
     edit_activation_synthesize(classifier.bert.encoder.layer[num_hidden_layers-1], act_indices=indices_bkd)
     edit_pooler(classifier.bert.pooler, act_indices=indices_bkd, noise_thres=ending_dict['pooler_noise_threshold'],
-                pooler_multiplier=ending_dict['pooler_multiplier'])  # NOTE that we always use ReLU for pooler, so that do NOT need to scale it
-    wrong_classes = [random.choice(list(classes.difference(ps_this_bkd))) for ps_this_bkd in possible_classes]
-    edit_probe(classifier.classifier, act_indices=indices_bkd, wrong_classes=wrong_classes,
-               activation_multiplier=ending_dict['classifier_backdoor_multiplier'])
+                backdoor_pooler_multiplier=ending_dict['pooler_multiplier'], ft_pooler_multiplier=ending_dict.get('ft_pooler_multiplier', 1.0))  # NOTE that we always use ReLU for pooler, so that do NOT need to scale it
+    if ending_dict['use_random']:
+        wrong_classes = None
+    else:
+        wrong_classes = [random.choice(list(classes.difference(ps_this_bkd))) for ps_this_bkd in possible_classes]
+    edit_probe(classifier.classifier, act_indices=indices_bkd, use_random=ending_dict['use_random'],
+               wrong_classes=wrong_classes, activation_multiplier=ending_dict.get('classifier_backdoor_multiplier', None))
     if device is not None:
         classifier = classifier.to(device)
     print('FINISH INITIALIZATION')
@@ -945,7 +952,7 @@ class BertMonitor:
                 info_this_bkd = self.activation_history[j]
                 print(f'backdoor:{j}, all activated:{len(info_this_bkd)}')
 
-                if len(info_this_bkd) > 0:
+                if len(info_this_bkd) > 1:
                     raw_candidate = [item for item in info_this_bkd if item['related_channels'][0] == 1 and len(item['related_channels']) > 1]
                     logit_max = [rc["logit"].max() for rc in raw_candidate]
                     print(f'backdoor:{j}, basic satisfied:{len(raw_candidate)}')
@@ -962,6 +969,8 @@ class BertMonitor:
                                     real_sequence_lst[j].append(item['input'])
                     else:
                         real_sequence_lst[j].append(None)
+                if len(info_this_bkd) == 1:
+                    real_sequence_lst[j].append(info_this_bkd[0]['input'])
                 else:
                     real_sequence_lst[j].append(None)
                 print('\n')
@@ -1032,7 +1041,7 @@ if __name__ == '__main__':
         native_attention_it_v1 = NativeOneAttentionEncoder(bertmodel=classifier_v1.bert, use_intermediate=True, before_intermediate=True)
         native_attention_at_v1 = NativeOneAttentionEncoder(bertmodel=classifier_v1.bert, use_intermediate=False)
     else:
-        path = './weights/txbkd_exp0_monitor.pth'
+        path = './weights/txbkd_random_heads_monitor.pth'
         # path = './weights/test_gelu_monitor.pth'
         monitor_info = torch.load(path, map_location='cpu')
         monitor = BertMonitor()

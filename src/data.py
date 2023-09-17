@@ -4,6 +4,7 @@ import torchvision.transforms as transforms
 from torch.utils.data import TensorDataset
 import datasets as hgf
 import torchvision.datasets as datasets
+from transformers import BertTokenizer
 
 
 def load_dataset(root, dataset, is_normalize=False, resize=None, is_augment=False, inlaid=None):
@@ -120,6 +121,11 @@ def load_text_dataset(root=None, dataset=None, tokenizer=None, max_len=64):
         train_sentences, train_labels = get_sentences_labels_from_dicts(train_dicts, text_key='text', label_key='coarse_label')
         test_sentences, test_labels = get_sentences_labels_from_dicts(test_dicts, text_key='text', label_key='coarse_label')
         classes = 6
+    elif dataset == 'trec50':
+        train_dicts, test_dicts = hgf.load_dataset('trec', split='train'), hgf.load_dataset('trec', split='test')
+        train_sentences, train_labels = get_sentences_labels_from_dicts(train_dicts, text_key='text', label_key='fine_label')
+        test_sentences, test_labels = get_sentences_labels_from_dicts(test_dicts, text_key='text', label_key='fine_label')
+        classes = 50
     else:
         train_sentences, train_labels = None, None
         test_sentences, test_labels = None, None
@@ -160,7 +166,13 @@ def get_dataloader(ds0, batch_size, num_workers, ds1=None, shuffle=False):
 
 
 if __name__ == '__main__':
+    """
     root = '../../oxfordpet'
     dataset = 'oxfordpet'
     train_dataset, test_dataset, resolution, classes = load_dataset(root, dataset, is_normalize=True, resize=224, is_augment=False, inlaid=None)
     print("DATASET")
+    """
+    tokenizer = BertTokenizer.from_pretrained('bert-base-uncased', do_lower_case=True)
+    load_text_dataset(root=None, dataset='trec', tokenizer=tokenizer, max_len=64)
+    print('LOAD TEXT DATASET')
+

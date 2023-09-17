@@ -79,7 +79,7 @@ def print_readable_word(path, word_code_lst, monitor, tokenizer):
 
 if __name__ == '__main__':
     output_zero = True
-    path = './weights/txbkd_exp0_monitor.pth'
+    path = './weights/txbkd_random_heads_monitor.pth'
     # save_path_full = './experiments/results/20230901_bert_vanilla/reconstruct_full_exp0.csv'
     # save_path_pre = './experiments/results/20230901_bert_vanilla/reconstruct_pre_exp0.txt'
 
