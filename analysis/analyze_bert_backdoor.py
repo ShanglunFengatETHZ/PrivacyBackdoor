@@ -77,19 +77,47 @@ def print_readable_word(path, word_code_lst, monitor, tokenizer):
             print(monitor.get_text(tokenizer, word_code, skip_special_tokens=True), file=f)
 
 
+def print_final_presentation(path, reconstruction_lst, groundtruth_lst):
+    path_reconstruction = f'{path}_reconstruction.txt'
+    path_groundtruth = f'{path}_groundtruth.txt'
+    with open(path_reconstruction, 'wt') as f:
+        for k in range(len(reconstruction_lst)):
+            print(f'{k}.  {reconstruction_lst[k]}', file=f)
+
+    with open(path_groundtruth, 'wt') as g:
+        for k in range(len(groundtruth_lst)):
+            if len(groundtruth_lst[k]) == 0:
+                print(f'{k}.  NONE', file=g)
+            else:
+                for i in range(len(groundtruth_lst[k])):
+                    if i == 0:
+                        print(f'{k}.  {groundtruth_lst[k][i]}', file=g)
+                    else:
+                        print(f'    {groundtruth_lst[k][i]}', file=g)
+
+
 if __name__ == '__main__':
     output_zero = True
-    path = './weights/test_gelu_random_monitor.pth'
-    # path = './weights/txbkd_random_heads_monitor.pth'
-    # save_path_full = './experiments/results/20230901_bert_vanilla/reconstruct_full_exp0.csv'
-    # save_path_pre = './experiments/results/20230901_bert_vanilla/reconstruct_pre_exp0.txt'
+
+    # path = './weights/20230918_complete/bert_relu_craftedhead_trec6_monitor.pth'
+    # save_path_pre = './experiments/results/20230918_complete/bert_relu_craftedhead_trec6'
+
+    # path = './weights/20230918_complete/bert_relu_randhead_trec50_monitor.pth'
+    # save_path_pre = './experiments/results/20230918_complete/bert_relu_randhead_trec50'
+
+    # path = './weights/bert_gelu_randhead_trec50_monitor.pth'
+    # save_path_pre = None
+    # save_path_pre = './experiments/results/20230918_complete/bert_gelu_randhead_trec50'
+
+    path = './weights/bert_gelu_craftedhead_trec6_monitor.pth'
+    save_path_pre = './experiments/results/20230918_complete/bert_gelu_craftedhead_trec6'
+    # save_path_pre = None
 
     # path = './weights/txbkd_exp_smallvo_monitor.pth'
     # save_path_full = './experiments/results/20230901_bert_vanilla/reconstruct_full_exp_smallvo.csv'
     # save_path_pre = './experiments/results/20230901_bert_vanilla/reconstruct_pre_exp_smallvo.txt'
 
     save_path_full = None
-    save_path_pre = None
     max_len = 24
     save_path_word = None
     save_path_position = None
@@ -117,6 +145,9 @@ if __name__ == '__main__':
 
     possible_sequences = monitor.show_possible_sequences(approach='semantics', logit_thres=1.0)
 
+    reconstruction_lst = []
+    groundtruth_lst = []
+
     for j in range(len(monitor.backdoor_indices)):
         bkd_indices = monitor.backdoor_indices[j]
         posi_code_this_seq, features_this_seq = monitor.get_update_a_sequence(indices_bkd_this_sequence=bkd_indices,
@@ -135,10 +166,22 @@ if __name__ == '__main__':
         print(f'position similarity:{similarity}')
         print(f'position second similarity:{second_similarity}')
         print(f'word indices:{word_code}')
-        print(f'text:{monitor.get_text(tokenizer, word_code, skip_special_tokens=skip)}')
-        for seq in possible_sequences[j]:
-            if seq is not None:
-                print(f'possible sequences:{monitor.get_text(tokenizer, seq, skip_special_tokens=skip)}')
+        reconstruction = monitor.get_text(tokenizer, word_code, skip_special_tokens=skip)
+        reconstruction_lst.append(reconstruction)
+        print(f'text:{reconstruction}')
+        groundtruth_lst.append([])
+        if len(possible_sequences[j]) > 10:
+            print(f'possible sequences: MESS')
+            groundtruth_lst[j].append('MESS')
+        elif len(possible_sequences[j]) == 0:
+            print(f'possible sequences: NONE')
+            groundtruth_lst[j].append('NONE')
+        else:
+            for seq in possible_sequences[j]:
+                if seq is not None:
+                    possible_groundtruth = monitor.get_text(tokenizer, seq, skip_special_tokens=skip)
+                    print(f'possible sequences:{possible_groundtruth}')
+                    groundtruth_lst[j].append(possible_groundtruth)
 
         print(f'word similarity:{similarity_1st}')
         print(f'alternative text:{monitor.get_text(tokenizer, alternative_code, skip_special_tokens=skip)}')
@@ -149,8 +192,6 @@ if __name__ == '__main__':
     if save_path_full is not None:
         print_reconstruction_to_table(save_path_full, max_len, posi_lst, posi_similarity, word_code_lst, smlar_1st_lst, alter_code_lst, smlar_2nd_lst, monitor, tokenizer)
 
-    if save_path_pre is not None:
-        print_readable_word(save_path_pre, word_code_lst, monitor, tokenizer)
 
     if save_path_word is not None:
         print_reconstruction_to_table(save_path_word, max_len, posi_lst, posi_similarity, word_code_lst, smlar_1st_lst,
@@ -163,6 +204,9 @@ if __name__ == '__main__':
     if save_path_alternative is not None:
         print_reconstruction_to_table(save_path_alternative, max_len, posi_lst, posi_similarity, word_code_lst, smlar_1st_lst,
                                       alter_code_lst, smlar_2nd_lst, monitor, tokenizer, output_items=['alternative'])
+
+    if save_path_pre is not None:
+        print_final_presentation(save_path_pre, reconstruction_lst=reconstruction_lst, groundtruth_lst=groundtruth_lst)
 
 
 

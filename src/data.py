@@ -48,13 +48,13 @@ def load_dataset(root, dataset, is_normalize=False, resize=None, is_augment=Fals
         original_resolution = None
         classes = 37
     elif dataset == 'caltech101':
+        transform_lst_test.append(IfGray2Colorful())
         if is_normalize:
-            transform_lst_train.append(transforms.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)))
             transform_lst_test.append(transforms.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)))
-        dataset = datasets.Caltech101(root, target_type='category ', transform=transforms.Compose(transform_lst_test))
-        train_dataset, test_dataset = get_subdataset(dataset, p=0.8)
+        dataset = datasets.Caltech101(root, target_type='category', transform=transforms.Compose(transform_lst_test))
+        train_dataset, test_dataset = get_subdataset(dataset, p=0.666)
         original_resolution = None
-        classes = 37
+        classes = 101
     else:
         if is_normalize:
             transform_lst_train.append(transforms.Normalize(mean=(0.4914, 0.4822, 0.4465), std=(0.2023, 0.1994, 0.2010)))
@@ -90,6 +90,18 @@ class DirectInlaid(object):
         large_image = self.default_values * torch.ones(3, self.target_size[0], self.target_size[1])
         large_image[:, self.start_from[0]: (self.start_from[0] + img.shape[1]), self.start_from[1]: (self.start_from[1] + img.shape[2])] = img
         return large_image
+
+
+class IfGray2Colorful(object):
+    def __init__(self):
+        pass
+
+    def __call__(self, img):
+        num_channel = img.shape[0]
+        if num_channel == 1:
+            img = torch.cat([img, img, img], dim=0)
+        return img
+
 
 
 def get_sentences_labels_from_dicts(dataset, text_key, label_key):
@@ -158,14 +170,14 @@ def get_subdataset(ds, p=0.5, random_seed=12345678):
         return ds_sub0, ds_sub1
 
 
-def get_dataloader(ds0, batch_size, num_workers, ds1=None, shuffle=False):
+def get_dataloader(ds0, batch_size, num_workers, ds1=None, shuffle=False, collate_fn=None):
     # return one or two dataloaders
     ds0_loader = data.DataLoader(dataset=ds0, batch_size=batch_size, shuffle=shuffle,
-                                 pin_memory=True, num_workers=num_workers)
+                                 pin_memory=True, num_workers=num_workers, collate_fn=collate_fn)
 
     if ds1 is not None:
         ds1_loader = data.DataLoader(dataset=ds1, batch_size=batch_size, shuffle=False,
-                                     pin_memory=True, num_workers=num_workers) # shuffle v.s. sampler https://discuss.pytorch.org/t/samplers-vs-shuffling/73740
+                                     pin_memory=True, num_workers=num_workers, collate_fn=collate_fn) # shuffle v.s. sampler https://discuss.pytorch.org/t/samplers-vs-shuffling/73740
         return ds0_loader, ds1_loader
     else:
         return ds0_loader
@@ -178,7 +190,19 @@ if __name__ == '__main__':
     train_dataset, test_dataset, resolution, classes = load_dataset(root, dataset, is_normalize=True, resize=224, is_augment=False, inlaid=None)
     print("DATASET")
     """
+
+    """
     tokenizer = BertTokenizer.from_pretrained('bert-base-uncased', do_lower_case=True)
     load_text_dataset(root=None, dataset='trec', tokenizer=tokenizer, max_len=64)
     print('LOAD TEXT DATASET')
+    """
+    root = '../../caltech-101'
+    dataset = 'caltech101'
+    train_dataset, test_dataset, resolution, classes = load_dataset(root, dataset, is_normalize=True, resize=224,
+                                                                    is_augment=False, inlaid=None)
+    print("DATASET")
+
+    dataloader = get_dataloader(train_dataset, batch_size=128, num_workers=0, ds1=None, collate_fn=None)
+    for X, y in dataloader:
+        print('what is wrong?')
 

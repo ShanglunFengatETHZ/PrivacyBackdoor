@@ -948,7 +948,7 @@ class ViTWrapper(nn.Module):
 
         return img_lst
 
-    def show_possible_images(self, approach='all'):
+    def show_possible_images(self, approach='all', threshold=0.0):
         # {'image': images[idx_dt[0]], 'idx_channel': idx_dt[1], 'idx_backdoor': idx_dt[2], 'logit': logits[idx_dt[0]], 'activation': signals_bkd[idx_dt[0], idx_dt[1], idx_dt[2]]}
         extracted_pixels = make_extract_pixels(**self.pixel_dict, resolution=self.model.patch_size)
         h = (self.pixel_dict['xend'] - self.pixel_dict['xstart']) // self.pixel_dict['xstep']
@@ -984,8 +984,16 @@ class ViTWrapper(nn.Module):
                 else:
                     real_images_lst.append(torch.zeros(3, h, w))
 
-        else:
-            pass
+        elif approach == 'activation_threshold':
+            for j in range(self.num_active_bkd):
+                info_this_bkd = possible_images_by_backdoors[j]
+                valid_info_this_bkd = [item for item in info_this_bkd if item['activation'] > threshold]
+                if len(valid_info_this_bkd) == 0:
+                    real_images_lst.append(-2.5 * torch.ones(3, h, w))
+                elif len(valid_info_this_bkd) > 1:
+                    real_images_lst.append(torch.zeros(3, h, w))
+                else:
+                    real_images_lst.append(valid_info_this_bkd[0]['subimage'])
 
         return real_images_lst, possible_images_by_backdoors
 
