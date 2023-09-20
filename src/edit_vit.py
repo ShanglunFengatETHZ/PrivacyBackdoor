@@ -952,6 +952,9 @@ class ViTWrapper(nn.Module):
         return img_lst
 
     def show_possible_images(self, approach='all', threshold=0.0):
+        # activation but not register reasons:
+        # 1. happen at the same batch abound 0.15 probability
+        # 2. different part activate twice and make this zero
         # {'image': images[idx_dt[0]], 'idx_channel': idx_dt[1], 'idx_backdoor': idx_dt[2], 'logit': logits[idx_dt[0]], 'activation': signals_bkd[idx_dt[0], idx_dt[1], idx_dt[2]]}
         extracted_pixels = make_extract_pixels(**self.pixel_dict, resolution=self.model.patch_size)
         h = (self.pixel_dict['xend'] - self.pixel_dict['xstart']) // self.pixel_dict['xstep']
@@ -963,7 +966,8 @@ class ViTWrapper(nn.Module):
                                        subimage_resolution=self.model.patch_size, extracted_pixels=extracted_pixels)
             subimage_3d = subimage_2d.reshape(3, h, w)
             possible_images_by_backdoors[item['idx_backdoor']].append({'subimage': subimage_3d, 'logit': item['logit'],
-                                                                       'activation': item['activation']})
+                                                                       'activation': item['activation'], 'clock':item['clock'],
+                                                                       'idx_channel': item['idx_channel']})
 
         real_images_lst = []
         if approach == 'all':
@@ -997,6 +1001,22 @@ class ViTWrapper(nn.Module):
                     real_images_lst.append(torch.zeros(3, h, w))
                 else:
                     real_images_lst.append(valid_info_this_bkd[0]['subimage'])
+
+        elif approach == 'intelligent':
+            for j in range(self.num_active_bkd):
+                info_this_bkd = possible_images_by_backdoors[j]
+                if len(info_this_bkd) == 0:
+                    real_images_lst.append(-2.5 * torch.ones(3, h, w))
+                elif len(info_this_bkd) > 1:
+                    item_1st, item_2nd = info_this_bkd[-1], info_this_bkd[-2]
+                    if item_1st['clock'] == item_2nd['clock']:
+                        img = torch.zeros(3, h, w)
+                    else:
+                        img = item_1st['subimage']
+                    real_images_lst.append(img)
+                else:
+                    real_images_lst.append(info_this_bkd[0]['subimage'])
+
 
         return real_images_lst, possible_images_by_backdoors
 
