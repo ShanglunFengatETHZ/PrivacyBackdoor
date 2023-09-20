@@ -571,7 +571,7 @@ class ViTWrapper(nn.Module):
         self.backdoor_ln_multiplier, self.conv_img_multiplier, self.backdoor_ft_bias = 1.0, 1.0, None
 
         self.logit_threshold, self.activation_threshold, self.activation_history, self.where_activation = None, None, [], 1  # registrar
-        self.active_registrar, self.logit_history, self.logit_history_length = False, [], 0
+        self.active_registrar, self.logit_history, self.logit_history_length, self.register_clock = False, [], 0, 0
 
     def forward(self, images):
         images = images.to(self.model.class_token.dtype)
@@ -632,7 +632,10 @@ class ViTWrapper(nn.Module):
             # assert len(indices_detailed) >= len(idx_outlier), f'WRONG SETTING:{len(indices_detailed)}, {len(idx_outlier)}'
             for idx_dt in indices_detailed:
                 self.activation_history.append({'image': images[idx_dt[0]], 'idx_channel': idx_dt[1], 'idx_backdoor': idx_dt[2],
-                                                'logit': logits[idx_dt[0]], 'activation': signals_bkd[idx_dt[0], idx_dt[1], idx_dt[2]]})
+                                                'logit': logits[idx_dt[0]], 'activation': signals_bkd[idx_dt[0], idx_dt[1], idx_dt[2]], 'clock':self.register_clock})
+
+        self.register_clock += 1
+
 
     def module_parameters(self, module='encoder'):
         if module == 'encoder':
