@@ -1,6 +1,6 @@
 import matplotlib.pyplot as plt
 import numpy as np
-
+import resultdata as rd
 
 def vit():
     epoch = [0, 1, 2, 3, 4, 5]
@@ -26,9 +26,81 @@ def bert():
     plt.plot(epoch, acc_test, label='test', marker='o', color='orange', markersize=8)
 
 
+def complete_vit_pet():
+    acc_train_relu = rd.add_initial_values(rd.acc_train_vit_pet_relu, dataset='pet')
+    acc_test_relu = rd.add_initial_values(rd.acc_test_vit_pet_relu, dataset='pet')
+    acc_train_gelu = rd.add_initial_values(rd.acc_train_vit_pet_gelu, dataset='pet')
+    acc_test_gelu = rd.add_initial_values(rd.acc_test_vit_pet_gelu, dataset='pet')
+    epoch = np.arange(len(acc_train_relu))
+    plt.plot(epoch, acc_train_relu, label='train, ReLU', marker='o', color='purple', markersize=8)
+    plt.plot(epoch, acc_test_relu, label='test, ReLU', marker='*', color='purple', markersize=8)
+    plt.plot(epoch, acc_train_gelu, label='train, GELU', marker='o', color='orange', markersize=8)
+    plt.plot(epoch, acc_test_gelu, label='test, GELU', marker='*', color='orange', markersize=8)
+
+
+def complete_vit_caltech():
+    acc_train_relu = rd.add_initial_values(rd.acc_train_vit_caltech_relu, dataset='pet')
+    acc_test_relu = rd.add_initial_values(rd.acc_test_vit_caltech_relu, dataset='pet')
+    acc_train_gelu = rd.add_initial_values(rd.acc_train_vit_caltech_gelu, dataset='pet')
+    acc_test_gelu = rd.add_initial_values(rd.acc_test_vit_caltech_gelu, dataset='pet')
+    epoch = np.arange(len(acc_train_relu))
+    plt.plot(epoch, acc_train_relu, label='train, ReLU', marker='o', color='purple', markersize=8)
+    plt.plot(epoch, acc_test_relu, label='test, ReLU', marker='*', color='purple', markersize=8)
+    plt.plot(epoch, acc_train_gelu, label='train, GELU', marker='o', color='orange', markersize=8)
+    plt.plot(epoch, acc_test_gelu, label='test, GELU', marker='*', color='orange', markersize=8)
+
+
+def complete_bert_trec6():
+    acc_train_relu = rd.add_initial_values(rd.acc_train_bert_trec6_relu, dataset='pet')
+    acc_test_relu = rd.add_initial_values(rd.acc_test_bert_trec6_relu, dataset='pet')
+    acc_train_gelu = rd.add_initial_values(rd.acc_train_bert_trec6_gelu, dataset='pet')
+    acc_test_gelu = rd.add_initial_values(rd.acc_test_bert_trec6_gelu, dataset='pet')
+    epoch = np.arange(len(acc_train_relu))
+    plt.plot(epoch, acc_train_relu, label='train, ReLU', marker='o', color='purple', markersize=8)
+    plt.plot(epoch, acc_test_relu, label='test, ReLU', marker='*', color='purple', markersize=8)
+    plt.plot(epoch, acc_train_gelu, label='train, GELU', marker='o', color='orange', markersize=8)
+    plt.plot(epoch, acc_test_gelu, label='test, GELU', marker='*', color='orange', markersize=8)
+
+
+def complete_bert_trec50():
+    acc_train_relu = rd.add_initial_values(rd.acc_train_bert_trec50_relu, dataset='pet')
+    acc_test_relu = rd.add_initial_values(rd.acc_test_bert_trec50_relu, dataset='pet')
+    acc_train_gelu = rd.add_initial_values(rd.acc_train_bert_trec50_gelu, dataset='pet')
+    acc_test_gelu = rd.add_initial_values(rd.acc_test_bert_trec50_gelu, dataset='pet')
+    epoch = np.arange(len(acc_train_relu))
+    plt.plot(epoch, acc_train_relu, label='train, ReLU', marker='o', color='purple', markersize=8)
+    plt.plot(epoch, acc_test_relu, label='test, ReLU', marker='*', color='purple', markersize=8)
+    plt.plot(epoch, acc_train_gelu, label='train, GELU', marker='o', color='orange', markersize=8)
+    plt.plot(epoch, acc_test_gelu, label='test, GELU', marker='*', color='orange', markersize=8)
+
+
+def mlp():
+    acc_train_ch = rd.add_initial_values(rd.acc_train_mlp_cifar10_craftedhead, dataset='cifar10')
+    acc_test_ch = rd.add_initial_values(rd.acc_test_mlp_cifar10_craftedhead, dataset='cifar10')
+    acc_train_rh = rd.add_initial_values(rd.acc_train_mlp_cifar10_randhead, dataset='cifar10')
+    acc_test_rh = rd.add_initial_values(rd.acc_test_mlp_cifar10_randhead, dataset='cifar10')
+    epoch = np.arange(len(acc_train_ch))
+    plt.plot(epoch, acc_train_ch, label='train, crafted head', marker='o', color='purple', markersize=8)
+    plt.plot(epoch, acc_test_ch, label='test, crafted head', marker='*', color='purple', markersize=8)
+    plt.plot(epoch, acc_train_rh, label='train, random head', marker='o', color='orange', markersize=8)
+    plt.plot(epoch, acc_test_rh, label='test, random head', marker='*', color='orange', markersize=8)
+
+
 def training_accuracy_improvement():
-    bert()
-    save_path = '../experiments/results/20230901_bert_vanilla/running_accuacy.eps'
+    # complete_vit_pet()
+    # save_path = '../experiments/results/20230918_complete/vit_pet.eps'
+
+    # complete_vit_caltech()
+    # save_path = '../experiments/results/20230918_complete/vit_caltech.eps'
+
+    # complete_bert_trec6()
+    # save_path = '../experiments/results/20230918_complete/bert_trec6.eps'
+
+    # complete_bert_trec50()
+    # save_path = '../experiments/results/20230918_complete/bert_trec50.eps'
+
+    mlp()
+    save_path = '../experiments/results/20230918_complete/mlp.eps'
 
     plt.xlabel('Epoch')
     plt.ylabel('Accuracy')

@@ -185,8 +185,8 @@ def get_dataloader(ds0, batch_size, num_workers, ds1=None, shuffle=False, collat
 
 if __name__ == '__main__':
 
-    root = '../../oxfordpet'
-    dataset = 'oxfordpet'
+    root = '../../caltech-101'
+    dataset = 'caltech101'
     train_dataset, test_dataset, resolution, classes = load_dataset(root, dataset, is_normalize=True, resize=224, is_augment=False, inlaid=None)
     print("DATASET")
 

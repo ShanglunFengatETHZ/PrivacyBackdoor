@@ -111,15 +111,14 @@ def train_model(model, dataloaders, optimizer, num_epochs, device='cpu', logger=
 """
 
 
-def dp_train_by_epoch(model, train_loader, optimizer, privacy_engine, epoch, delta=1e-5,
+def dp_train_by_epoch(model, train_loader, optimizer, privacy_engine, backdoor_registrar, epoch, delta=1e-5,
                       device='cpu', max_physical_batch_size=128, logger=None, use_inner_output=True):
-    # TODO: can this train function use for other DP-parameter combination
     model.train()
     criterion = nn.CrossEntropyLoss()
 
     losses = []
     is_correct_lst = []
-    is_update_state = False
+    # is_update_state = False
 
     with BatchMemoryManager(
             data_loader=train_loader,
@@ -135,7 +134,7 @@ def dp_train_by_epoch(model, train_loader, optimizer, privacy_engine, epoch, del
             # compute output
             if use_inner_output:
                 output, inner_output = model(images)
-                model.backdoor_registrar.collect_inner_state(inner_output)
+                # backdoor_registrar.collect_inner_state(inner_output)
             else:
                 output = model(images)
 
@@ -150,14 +149,23 @@ def dp_train_by_epoch(model, train_loader, optimizer, privacy_engine, epoch, del
 
             loss.backward()  # use _check_skip_next_step to know updates
 
+            """
             if not optimizer._check_skip_next_step(pop_next=False):
                 is_update_state = True
+            """
+
             optimizer.step()
 
+            """
             if is_update_state:
                 model.update_state()
                 model.backdoor_registrar.update_log_logical()
                 is_update_state = False
+            """
+            if not optimizer._is_last_step_skipped:
+                # p.summed_grad = None
+                backdoor_registrar.update_grad_log(model)
+                backdoor_registrar.update_v2class_log(model)
 
         epsilon = privacy_engine.get_epsilon(delta)
 
@@ -166,7 +174,7 @@ def dp_train_by_epoch(model, train_loader, optimizer, privacy_engine, epoch, del
         losses = torch.tensor(losses)
         avg_loss = losses.mean().item()
     if logger is not None:
-        logger.info(f"Epoch {epoch} Loss: {avg_loss:.4f} Acc@1: {acc:.4f} (ε = {epsilon:.3f}, δ = {delta})")
+        logger.info(f"Epoch {epoch} Loss: {avg_loss:.4f} Acc@1: {acc:.4f} (ε = {epsilon:.3f}, δ = {delta}, noise_multiplier = {optimizer.noise_multiplier:.3f})")
     return acc, epsilon, delta
 
 

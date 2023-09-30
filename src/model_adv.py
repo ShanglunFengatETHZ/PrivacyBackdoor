@@ -254,16 +254,17 @@ class EncoderMLP(nn.Module):
     def load_weight(self, path_to_weights, which_module=None):
         weights = torch.load(path_to_weights, map_location='cpu')
         assert isinstance(weights, dict), 'the weight should be a dict'
+        assert isinstance(which_module, str), "only accept string as modules' name"
         if which_module is None:
-            which_module = self.module_names
+            selected_module = self.module_names
         elif isinstance(which_module, str) and which_module == 'mlp':
-            which_module = self.module_names[1:]
-        elif isinstance(which_module, str):
-            which_module = [which_module]
+            selected_module = self.module_names[1:]
+        elif isinstance(which_module, str) and which_module == 'other_than_probe':
+            selected_module = self.module_names[:-1]
         else:
-            assert isinstance(which_module, list), 'input module that cannot be understood'
+            selected_module = [which_module]
 
-        for module in which_module:
+        for module in selected_module:
             getattr(self, module).load_state_dict(weights[module])
 
     def save_weight(self):
@@ -277,6 +278,10 @@ class EncoderMLP(nn.Module):
             params = [param for name, param in self.encoder.named_parameters()]
         elif module == 'mlp':
             params = [param for mlp_module in self.module_names[1:] for name, param in getattr(self, mlp_module).named_parameters()]
+        elif module == 'other_than_probe':
+            params = [param for name, param in self.named_parameters() if name not in ['probe.weight', 'probe.bias']]
+        elif module == 'probe':
+            params = [param for name, param in self.named_parameters() if name in ['probe.weight', 'probe.bias']]
         else:
             params = [param for name, param in getattr(self, module).named_parameters()]
         return params
@@ -343,6 +348,9 @@ class DiffPrvBackdoorRegistrar:
             self.indices_bkd_u, self.indices_bkd_v = None, None
             self.indices_others_u, self.indices_others_v = None, None
 
+        self.backdoor_arch_info = {'num_bkd': num_bkd, 'm_u': m_u, 'm_v': m_v, 'indices_bkd_u': indices_bkd_u,
+                                   'indices_bkd_v': indices_bkd_v, 'target_image_label': target_image_label}
+
         self.u_act_log = []
         self.v_act_log = []
         self.inner_outputs_cache = []
@@ -365,7 +373,8 @@ class DiffPrvBackdoorRegistrar:
             'indices_bkd_u': self.indices_bkd_u , 'indices_bkd_v': self.indices_bkd_v, 'indices_others_u': self.indices_others_u, 'indices_others_v': self.indices_others_v,
             'u_act_log':self.u_act_log, 'v_act_log': self.v_act_log, 'inner_outputs_cache':self.inner_outputs_cache ,'v_cache':self.v_cache, 'bu_bkd_log':self.bu_bkd_log,
             'epoch':self.epoch, 'eps': self.eps,
-            'target_images':self.target_images , 'target_labels':self.target_labels
+            'target_images':self.target_images, 'target_labels':self.target_labels,
+            'backdoor_arch_info': self.backdoor_arch_info
         }
 
     def load_information(self, info_dict):
@@ -472,6 +481,57 @@ class DiffPrvBackdoorRegistrar:
         return bu_bkd_array[-1] - bu_bkd_array[0]
 
 
+class DiffPrvGradRegistrar:
+    def __init__(self, backdoor_weight_name, backdoor_indices, backdoor_arch_info=None):
+        self.backdoor_weight_name = backdoor_weight_name
+        self.backdoor_indices = backdoor_indices
+        self.grad_log = []
+        self.v2class_log = []
+        self.epoch = -1
+        self.backdoor_arch_info = backdoor_arch_info
+
+    def save_information(self):
+        return {
+            'backdoor_weight_name': self.backdoor_weight_name,
+            'backdoor_indices': self.backdoor_indices,
+            'grad_log': self.grad_log,
+            'v2class_log': self.v2class_log,
+            'backdoor_arch_info': self.backdoor_arch_info
+        }
+
+    def load_information(self, info_dict):
+        for key in info_dict.keys():
+            setattr(self, key, info_dict[key])
+
+    def update_grad_log(self, model, approach='summed_grad'):
+        wgt = eval(f'model.{self.backdoor_weight_name}')
+        grad = getattr(wgt, approach)
+        grad_at_backdoor = eval(f'grad[{self.backdoor_indices}]')
+        grad_at_backdoor = grad_at_backdoor.unsqueeze(dim=0) if grad_at_backdoor.dim() == 0 else grad_at_backdoor
+        self.grad_log[self.epoch].append(grad_at_backdoor)
+
+    def update_v2class_log(self, model):
+        v2class_all = model.probe.weight.detach().clone()
+        v2_class_bkd = v2class_all[:, self.backdoor_arch_info['indices_bkd_v']]
+        self.v2class_log[self.epoch].append(v2_class_bkd)
+
+    def update_epoch(self, epoch):
+        assert epoch - self.epoch == 1, 'wrong update'
+        self.epoch = epoch
+        self.grad_log.append([])
+        self.v2class_log.append([])
+
+    def output_gradient_log(self, byepoch=False):
+        output_grads = []
+        for info_by_epoch in self.grad_log:
+            grad_this_epoch = torch.cat(info_by_epoch)
+            output_grads.append(grad_this_epoch)
+        if byepoch:
+            return output_grads
+        else:
+            return torch.cat(output_grads)
+
+
 class InitEncoderMLP(EncoderMLP):
     def __init__(self, encoder=None, mlp_sizes=None, input_size=(3, 32, 32), num_classes=10):
         super().__init__(encoder=encoder, mlp_sizes=mlp_sizes, input_size=input_size, num_classes=num_classes, dropout=None)
@@ -483,8 +543,9 @@ class InitEncoderMLP(EncoderMLP):
         z = self.probe(v)
         return z, (u.clone().detach(), v.clone().detach())
 
-    def vanilla_initialize(self, encoder_scaling_module_idx=-1, baits=None, thresholds=None, passing_threshold=None, multipliers=None, backdoor_registrar=None):
-        u_indices_bkd,  v_indices_bkd = backdoor_registrar.indices_bkd_u, backdoor_registrar.indices_bkd_v
+    def initialize_backdoor(self, encoder_scaling_module_idx=-1, baits=None, thresholds=None, passing_threshold=None,
+                            multipliers=None, backdoor_registrar=None):
+        u_indices_bkd,  v_indices_bkd = backdoor_registrar.backdoor_arch_info['indices_bkd_u'], backdoor_registrar.backdoor_arch_info['indices_bkd_v']
 
         idx_module, scaling_multiplier = encoder_scaling_module_idx, multipliers.get('encoder', 1.0),
         assert isinstance(self.encoder[idx_module], nn.Conv2d)
@@ -500,18 +561,44 @@ class InitEncoderMLP(EncoderMLP):
         self._lock_ft_pass_act(self.mlp_2ndpart[0], u_indices_bkd=u_indices_bkd, v_indices_bkd=v_indices_bkd, passing_threshold=passing_threshold,
                                lock_multiplier=multipliers.get('features_lock', 1.0), act_passing_multiplier=multipliers.get('activation_passing', 1.0), threshold_multiplier=threshold_multiplier)
 
+    def initialize_crafted_head(self, backdoor_registrar, act_connect_multiplier=1.0):
+        num_bkd = backdoor_registrar.backdoor_arch_info['num_bkd']
+        target_image_label = backdoor_registrar.backdoor_arch_info['target_image_label']
+        target_labels = [label for img, label in target_image_label]
+        v_indices_bkd = backdoor_registrar.backdoor_arch_info['indices_bkd_v']
         classes_connect = []
-        for j in range(backdoor_registrar.num_bkd):
-            complement_set = cal_set_difference_seq(self.num_classes, backdoor_registrar.target_labels[j])
+        for j in range(num_bkd):
+            complement_set = cal_set_difference_seq(self.num_classes, target_labels[j])
             complement_set = complement_set.tolist()
             classes_connect.append(random.choice(complement_set))
-
         nn.init.xavier_normal_(self.probe.weight)
         self.probe.bias.data[:] = 0.
-        self._act_connect(self.probe, indices_bkd=v_indices_bkd, wrong_classes=classes_connect, act_connect_multiplier=multipliers.get('act_connect', 1.0))
+        self._act_connect(self.probe, indices_bkd=v_indices_bkd, wrong_classes=classes_connect,
+                          act_connect_multiplier=act_connect_multiplier)
 
-        self.activate_gradient_or_not('encoder', is_activate=False)
-        self.activate_gradient_or_not('mlp', is_activate=True)
+    def initialize_random_head(self, backdoor_registrar, gain=1.0, threshold=0.0, num_trial=100):
+        target_image_label = backdoor_registrar.backdoor_arch_info['target_image_label']
+        target_labels = torch.tensor([imglb[1] for imglb in target_image_label])
+        v_indices_bkd = backdoor_registrar.backdoor_arch_info['indices_bkd_v']
+
+        for j in range(num_trial):
+            nn.init.xavier_normal_(self.probe.weight, gain=gain)
+            weights = self.probe.weight.detach().clone()
+            values, indices = weights.topk(2, dim=0)
+            gap = values[0] - values[1]
+            is_satisfy = torch.ge(gap, threshold)
+            print(f'proportion,{torch.sum(is_satisfy) / len(gap)}')
+
+            largest_class = indices[0, v_indices_bkd]
+            second_largest_class = indices[1, v_indices_bkd]
+            backdoor_satisfy_class = torch.all(torch.logical_not(torch.eq(largest_class, target_labels)))
+            is_gap_bkd_satisfy = is_satisfy[v_indices_bkd]
+            backdoor_satisfy_gap = torch.all(is_gap_bkd_satisfy)
+            if backdoor_satisfy_class and backdoor_satisfy_gap:
+                print(f'largest:{weights[largest_class, v_indices_bkd]}, second largest:{weights[second_largest_class, v_indices_bkd]}, class:{weights[target_labels, v_indices_bkd]}')
+                return
+
+        print('!!!NO SUITABLE WEIGHTS!!!')
 
     def _pass_ft_build_act(self, module, indices_bkd, baits, thresholds,
                            ft_passing_multiplier=1.0, bait_multiplier=1.0, threshold_multiplier=1.0):
@@ -551,14 +638,27 @@ class InitEncoderMLP(EncoderMLP):
             module.weight.data[wrong_classes[j], idx] = act_connect_multiplier
 
 
+"""
 def update_state(self):
+    # TODO: try not to use this unsafe interface
     self.backdoor_registrar.update_state(self.state_dict()['_module.mlp_1stpart.0.bias'])
 
-
 def modifygradsamplemodule(safe_model, backdoor_registrar):
+    # TODO: try not to use this unsafe interface
     safe_model.backdoor_registrar = backdoor_registrar
     safe_model.update_state = MethodType(update_state, safe_model)
+"""
 
+
+if __name__ == '__main__':
+    cnn_encoder_module = ['Conv2d(3, 64, kernel_size=5, stride=2, padding=2)', 'ReLU()', 'MaxPool2d(kernel_size=3, stride=2, padding=1)',
+                'Conv2d(64, 64, kernel_size=3, stride=2, padding=1)', 'ReLU()', 'MaxPool2d(kernel_size=3, stride=2, padding=1)', 'Flatten()']
+    cnn_encoder = nn.Sequential(*[eval('nn.' + cnn_module) for cnn_module in cnn_encoder_module])
+    classifier = EncoderMLP(encoder=cnn_encoder, mlp_sizes=[64, 32], input_size=(3, 32, 32), num_classes=10, dropout=None,
+                 return_intermediate=False)
+
+    for name, weight in classifier.named_parameters():
+        print(name)
 
 
 

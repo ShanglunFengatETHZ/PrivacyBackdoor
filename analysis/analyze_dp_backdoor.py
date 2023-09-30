@@ -1,6 +1,6 @@
 import torch
 import matplotlib.pyplot as plt
-from src.model_adv import DiffPrvBackdoorRegistrar
+from src.model_adv import DiffPrvBackdoorRegistrar, DiffPrvGradRegistrar
 
 if __name__ == '__main__':
     path_to_registrar = './weights/dpbkd_pre_rgs_ex0.pth'
@@ -9,11 +9,14 @@ if __name__ == '__main__':
     L = 512
     eta = 0.2
 
+    # registrar = DiffPrvBackdoorRegistrar()
+    backdoor_registrar = DiffPrvGradRegistrar()
+    backdoor_registrar.load_information(torch.load(path_to_registrar))
+    # delta_not_act = backdoor_registrar.get_change_by_activation(activation_count=0)
+    # delta_act = backdoor_registrar.get_change_by_activation(activation_count=1)
+    output_grads = backdoor_registrar.output_gradient_log(byepoch=False)
 
-    registrar = DiffPrvBackdoorRegistrar()
-    registrar.load_information(torch.load(path_to_registrar))
-    delta_not_act = registrar.get_change_by_activation(activation_count=0)
-    delta_act = registrar.get_change_by_activation(activation_count=1)
+    """
     print(f'number: {len(delta_not_act)}, mean value:{delta_not_act.mean()}, standard error:{delta_not_act.std()}')
     print(f'number: {len(delta_act)}, mean value:{delta_act.mean()}, standard error:{delta_act.std()}')
     std_th = eta * noise * clip / L
@@ -37,3 +40,5 @@ if __name__ == '__main__':
     plt.tight_layout()
     plt.savefig('experiments/results/20230901_bert_vanilla/dp_delta_dist.pdf')
     plt.show()
+    """
+
