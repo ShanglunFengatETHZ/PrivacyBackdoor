@@ -482,7 +482,7 @@ class DiffPrvBackdoorRegistrar:
 
 
 class DiffPrvGradRegistrar:
-    def __init__(self, backdoor_weight_name, backdoor_indices, backdoor_arch_info=None):
+    def __init__(self, backdoor_weight_name=None, backdoor_indices=None, backdoor_arch_info=None):
         self.backdoor_weight_name = backdoor_weight_name
         self.backdoor_indices = backdoor_indices
         self.grad_log = []
@@ -524,12 +524,22 @@ class DiffPrvGradRegistrar:
     def output_gradient_log(self, byepoch=False):
         output_grads = []
         for info_by_epoch in self.grad_log:
-            grad_this_epoch = torch.cat(info_by_epoch)
+            grad_this_epoch = torch.stack(info_by_epoch)
             output_grads.append(grad_this_epoch)
         if byepoch:
             return output_grads
         else:
             return torch.cat(output_grads)
+
+    def output_v2class_log(self):
+        all_weights = torch.stack([item for logs in self.v2class_log for item in logs])
+        return all_weights
+
+    def check_v2class_largest(self):
+        all_weights = self.output_v2class_log()
+        idx_max = all_weights[0].argmax()
+        idx_max_during_training = all_weights.argmax(dim=1)
+        print(f'total results:{len(idx_max_during_training)}, {torch.sum(torch.eq(idx_max_during_training, idx_max))}')
 
 
 class InitEncoderMLP(EncoderMLP):

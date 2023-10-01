@@ -153,7 +153,7 @@ def build_public_model(info_dataset, info_model, info_train, logger, save_path=N
     train_dataset, test_dataset, resolution, num_classes = load_dataset(ds_path, ds_name, is_normalize=is_normalize_ds, is_augment=True)
 
     # dp-sgd training - related hyper-parameters
-    batch_size, learning_rate, num_epochs = info_train.get('BATCH_SIZE', 1024), info_train.get('LR', 0.1), info_train.get('EPOCHS', 10)
+    batch_size, learning_rate, num_epochs = info_train['BATCH_SIZE'], info_train.get('LR', 0.1), info_train.get('EPOCHS', 10)
     device, num_workers, verbose = info_train.get('DEVICE', 'cpu'), info_train.get('NUM_WORKERS', 2), info_train.get('VERBOSE', False)
 
     # model architecture and initialization related hyper-parameters
