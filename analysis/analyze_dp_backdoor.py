@@ -77,20 +77,25 @@ def show_multiple_epsilon(epoch, sample_rate, noise_multiplier, concentration=0.
         print(f'{multiple}, {xlst}')
         ylst = []
         if multiple == 'epoch':
-            for x in xlst:
-                ylst.append(get_hat_epsilon(epoch=x, sample_rate=sample_rate, noise_multiplier=noise_multiplier, concentration=concentration))
+            for i, x in enumerate(xlst):
+                epsilon = get_hat_epsilon(epoch=x, sample_rate=sample_rate, noise_multiplier=noise_multiplier, concentration=concentration)
+                print(i, epsilon)
+                ylst.append(epsilon)
         elif multiple == 'sample_rate':
             for x in xlst:
-                ylst.append(get_hat_epsilon(epoch=epoch, sample_rate=x, noise_multiplier=noise_multiplier,
-                                                concentration=concentration))
+                epsilon = get_hat_epsilon(epoch=epoch, sample_rate=x, noise_multiplier=noise_multiplier, concentration=concentration)
+                print(i, epsilon)
+                ylst.append(epsilon)
         elif multiple == 'noise_multiplier':
             for x in xlst:
-                ylst.append(get_hat_epsilon(epoch=epoch, sample_rate=sample_rate, noise_multiplier=x,
-                                                concentration=concentration))
+                epsilon = get_hat_epsilon(epoch=epoch, sample_rate=sample_rate, noise_multiplier=x, concentration=concentration)
+                print(i, epsilon)
+                ylst.append(epsilon)
         elif multiple == 'concentration':
             for x in xlst:
-                ylst.append(get_hat_epsilon(epoch=epoch, sample_rate=sample_rate, noise_multiplier=noise_multiplier,
-                                            concentration=x))
+                epsilon = get_hat_epsilon(epoch=epoch, sample_rate=sample_rate, noise_multiplier=noise_multiplier, concentration=x)
+                print(i, epsilon)
+                ylst.append(epsilon)
         print(f'epsilon, {ylst}')
     else:
         assert False, 'NOT SUPPORT'
@@ -122,7 +127,6 @@ def check_backdoor_registrar(path2registrar, rand_head=False, thres=0.5):
 def plot_activation(grad_act, grad_inact, save_path=None):
     print(f'act, num:{len(grad_act)}, mean:{grad_act.mean().item()} std:{grad_act.std().item()}')
     print(f'inact, num:{len(grad_inact)}, mean:{grad_inact.mean().item()} std:{grad_inact.std().item()}')
-
 
     plt.hist([grad_inact.tolist(),grad_act.tolist()], alpha=1.0, label=['disappear','appear'], color=['blue', 'orange'])
     print(grad_act.tolist())

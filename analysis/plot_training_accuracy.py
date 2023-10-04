@@ -1,6 +1,6 @@
 import matplotlib.pyplot as plt
 import numpy as np
-import resultdata as rd
+import resultdata_reconstructimage as rd
 
 def vit():
     epoch = [0, 1, 2, 3, 4, 5]
