@@ -140,6 +140,30 @@ def plot_activation(grad_act, grad_inact, save_path=None):
     plt.show()
 
 
+def plot_concentration_epsilon(concentration, epsilon, save_path=None):
+    plt.plot(concentration, epsilon, label=None, marker='o', color='purple', markersize=8)
+    plt.title(None)
+    plt.legend(loc='upper right')
+    plt.xlabel('concentration')
+    plt.ylabel(r'$\tilde{\varepsilon}$')
+    plt.tight_layout()
+    if save_path is not None:
+        plt.savefig(save_path)
+    plt.show()
+
+
+def plot_noisemultiplier_epsilon(noise_multiplier, epsilon, save_path=None):
+    plt.plot(noise_multiplier, epsilon, label=None, marker='o', color='purple', markersize=8)
+    plt.title(None)
+    plt.legend(loc='upper right')
+    plt.xlabel('noise multiplier')
+    plt.ylabel(r'$\tilde{\varepsilon}$')
+    plt.tight_layout()
+    if save_path is not None:
+        plt.savefig(save_path)
+    plt.show()
+
+
 if __name__ == '__main__':
     # show_multiple_epsilon(epoch=12, sample_rate=0.01, noise_multiplier=[0.5,0.75,1.0,1.25,1.5,2.0], concentration=1.0, multiple='noise_multiplier')
     # path2registrar = './weights/test_probe_rgs_ex0.pth'
