@@ -102,8 +102,6 @@ def show_multiple_epsilon(epoch, sample_rate, noise_multiplier, concentration=0.
 
 
 def check_backdoor_registrar(path2registrar, rand_head=False, thres=0.5):
-    # TODO: get information first, not plot in this function
-    # TODO: print epoch information
     backdoor_registrar = DiffPrvGradRegistrar()
     backdoor_registrar.load_information(torch.load(path2registrar))
 
