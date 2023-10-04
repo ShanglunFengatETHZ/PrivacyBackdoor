@@ -177,20 +177,24 @@ def build_public_model(info_dataset, info_model, info_train, logger, save_path=N
 
 
 def dp_train(num_epochs, classifier, train_loader, test_loader, optimizer, privacy_engine, backdoor_registrar, delta=1e-5, device='cpu',
-             max_physical_batch_size=64, logger=None):
+             max_physical_batch_size=64, logger=None, target_epsilon=None):
     acc_lst = []
     epsilon_lst = []
     delta_lst = []
     for epoch in range(num_epochs):
         backdoor_registrar.update_epoch(epoch)
-        backdoor_registrar.update_v2class_log(classifier)
+        if epoch == 0:
+            backdoor_registrar.update_v2class_log(classifier)
         # if epoch == 0:
         #  classifier.update_state()
         acc, epsilon, delta = dp_train_by_epoch(classifier, train_loader, optimizer, privacy_engine, backdoor_registrar,
-                                                epoch=epoch, delta=delta, device=device, max_physical_batch_size=max_physical_batch_size, logger=logger)
-        acc_lst.append(round(acc,3))
-        epsilon_lst.append(round(epsilon,3))
+                                                epoch=epoch, delta=delta, device=device, max_physical_batch_size=max_physical_batch_size,
+                                                logger=logger)
+        acc_lst.append(round(acc, 3))
+        epsilon_lst.append(round(epsilon, 3))
         delta_lst.append(delta)
+        if target_epsilon is not None and epsilon >= target_epsilon:
+            break
 
     test_acc = evaluation(classifier, test_loader, device=device)
     logger.info(f"\tTest set Acc: {test_acc:.4f}")
@@ -257,7 +261,8 @@ def build_dp_model(info_dataset, info_model, info_train, info_target, logger=Non
     threshold, passing_threshold = set_threshold(upperlowerbounds, threshold_quantile=threshold_quantile, passing_threshold_quantile=passing_threshold_quantile)
     initialization_information = {'encoder_scaling_module_idx': encoder_scaling_module_idx, 'baits': baits, 'thresholds': threshold,
                                   'passing_threshold': passing_threshold, 'multipliers': multipliers}
-    logger.info(f'upper bounds:{upperlowerbounds[0].item()}\n lower bounds:{upperlowerbounds[1].item()}\n threshold:{threshold.item()}\n passing threshold:{passing_threshold}')
+    logger.info(f'upper bounds:{round(upperlowerbounds[0].item(),3)}  lower bounds:{round(upperlowerbounds[1].item(),3)} threshold:{round(threshold.item(),3)} passing threshold:{round(passing_threshold.item(),3)}')
+    logger.info(f'largest - safe_bound: {round(upperlowerbounds[0].item() - (threshold.item() + passing_threshold.item()),3)}, bound - second largest: {round(threshold.item() - upperlowerbounds[1].item(),3)}')
     logger.info(f'multipliers:{multipliers}')
 
     classifier = InitEncoderMLP(encoder=cnn_encoder, mlp_sizes=mlp_sizes, input_size=(3, resolution, resolution),
@@ -274,7 +279,7 @@ def build_dp_model(info_dataset, info_model, info_train, info_target, logger=Non
             has_membership_this_experiment = has_membership
         else:
             assert isinstance(has_membership, float), 'the has membership can only be float and bool'
-            assert has_membership >= 0. and has_membership <= 1., 'the probability is wrong'
+            assert has_membership >= 0.0 and has_membership <= 1.0, 'the probability is wrong'
             rv = torch.rand(1).item()
             has_membership_this_experiment = True if rv < has_membership else False
         train_loader = train_loader_appear if has_membership_this_experiment else train_loader_disappear
@@ -311,7 +316,7 @@ def build_dp_model(info_dataset, info_model, info_train, info_target, logger=Non
         logger.info(f"Using sigma={safe_optimizer.noise_multiplier}, C={max_grad_norm}, Epochs={num_epochs}")
         logger.info('NOW WE HAVE FINISHED INITIALIZATION, STARTING TRAINING!!!')
         dp_train(num_epochs, safe_classifier, safe_train_loader, test_loader, safe_optimizer, privacy_engine=privacy_engine, backdoor_registrar=backdoor_registrar, delta=delta, device=device,
-                 max_physical_batch_size=max_physical_batch_size, logger=logger)
+                 max_physical_batch_size=max_physical_batch_size, logger=logger, target_epsilon=epsilon)
 
         safe_classifier = safe_classifier.to('cpu')
         if save_path is not None:

@@ -15,7 +15,7 @@ def dp_vanilla():
 
 
 if __name__ == '__main__':
-    save_path = 'experiments/results/20230901_bert_vanilla/dp_trend.pdf'
+    save_path = None
     epoch, acc, eps = dp_vanilla()
 
     fig = plt.figure()
@@ -33,5 +33,7 @@ if __name__ == '__main__':
     ax2.set_ylabel(r'$\varepsilon$')
     plt.title(None)
     plt.tight_layout()
-    plt.savefig(save_path)
+    if save_path is not None:
+        plt.savefig(save_path)
+
     plt.show()

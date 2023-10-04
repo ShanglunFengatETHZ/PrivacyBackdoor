@@ -488,7 +488,7 @@ class DiffPrvGradRegistrar:
         self.grad_log = []
         self.v2class_log = []
         self.epoch = -1
-        self.backdoor_arch_info = backdoor_arch_info
+        self.backdoor_arch_info = backdoor_arch_info  # num_bkd,indices_bkd_u,indices_bkd_v,m_u,m_v,target_image_label
 
     def save_information(self):
         return {
@@ -536,10 +536,24 @@ class DiffPrvGradRegistrar:
         return all_weights
 
     def check_v2class_largest(self):
+        # assume there is only one backdoor
         all_weights = self.output_v2class_log()
         idx_max = all_weights[0].argmax()
         idx_max_during_training = all_weights.argmax(dim=1)
-        print(f'total results:{len(idx_max_during_training)}, {torch.sum(torch.eq(idx_max_during_training, idx_max))}')
+        print(f'total updates:{len(idx_max_during_training)}, max weight still largest{torch.sum(torch.eq(idx_max_during_training, idx_max))}') # idx_max is a scalar
+
+    def get_largest_correct_classes(self):
+        all_weights = self.output_v2class_log()
+        idx_max = all_weights[0].argmax()
+        labels = [label for image, label in self.backdoor_arch_info['target_image_label']]
+        return idx_max, labels
+
+    def count_nonzero_grad_by_epoch(self, noise_thres=1e-3):
+        grad_by_epoch = self.output_gradient_log(byepoch=True)
+        for i, grad_this_epoch in enumerate(grad_by_epoch):
+            grad_this_epoch_abs = torch.abs(grad_this_epoch)
+            is_non_noise = torch.ge(grad_this_epoch_abs, noise_thres)
+            print(f'epoch:{i}, non-noise gradient{is_non_noise.sum(dim=0).tolist()}')
 
 
 class InitEncoderMLP(EncoderMLP):

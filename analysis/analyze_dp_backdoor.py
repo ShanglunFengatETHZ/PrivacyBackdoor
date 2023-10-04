@@ -2,119 +2,151 @@ import torch
 import matplotlib.pyplot as plt
 import scipy.stats as ss
 import numpy as np
-from src.model_adv import DiffPrvBackdoorRegistrar, DiffPrvGradRegistrar
+from src.model_adv import DiffPrvGradRegistrar
 
 
-def get_lowerbound_epsilon_by_poisson_estimate():
-    pass
-
-
-class PoissonEstimator:
-    def __init__(self, shift, sigma, mu, delta):
-        self.shift = shift  # for Gaussian mean value
-        self.sigma = sigma  # for Gaussian std value
+class EpsilonEstimator:
+    def __init__(self, unit_shift, total_sigma, epoch, delta):
+        self.unit_shift = unit_shift
+        self.total_sigma = total_sigma
         self.delta = delta
-        self.mu = mu # for Poisson
+        self.epoch = epoch # for Poisson
 
-    def get_lowerbound_epsilon(self, x, m_minus, m_plus):
-        output_prime = 0.0
-        output_zero = ss.norm.sf(x, loc=0.0, scale=self.sigma)
+    def get_lowerbound_epsilon_poisson(self, x, m_minus, m_plus):
+        prob_shift = 0.0
+        prob_h0 = ss.norm.sf(x, loc=0.0, scale=self.total_sigma)
         for j in range(m_minus, m_plus):
-            total_shift = self.shift * j
-            output_prime += ss.poisson.pmf(j, mu=self.mu) * ss.norm.sf(x, loc=total_shift, scale=self.sigma)
+            total_shift = self.unit_shift * j
+            prob_shift += ss.poisson.pmf(j, mu=self.epoch) * ss.norm.sf(x, loc=total_shift, scale=self.total_sigma)
 
-        epsilon_hat = np.log((output_prime[output_prime > self.delta] - self.delta) / output_zero[output_prime > self.delta])
-        return epsilon_hat
+        reason_interval = prob_shift > self.delta
+        epsilon_hat = np.log((prob_shift[reason_interval] - self.delta) / prob_h0[reason_interval])
+        return epsilon_hat.max()
 
-    def get_lowerbound_epsilon_binom(self, x, m_minus, m_plus):
-        output_prime = 0.0
-        output_zero = ss.norm.sf(x, loc=0.0, scale=self.sigma)
+    def get_lowerbound_epsilon_binom(self, x, m_minus, m_plus, total_steps, sample_rate):
+        prob_shift = 0.0
+        prob_h0 = ss.norm.sf(x, loc=0.0, scale=self.total_sigma)
         for j in range(m_minus, m_plus):
-            total_shift = self.shift * j
-            output_prime += ss.binom.pmf(j, n=self.mu * 100, p=0.01) * ss.norm.sf(x, loc=total_shift, scale=self.sigma)
+            total_shift = self.unit_shift * j
+            prob_shift += ss.binom.pmf(j, n=total_steps, p=sample_rate) * ss.norm.sf(x, loc=total_shift, scale=self.total_sigma)
 
-        epsilon_hat = np.log((output_prime[output_prime > self.delta] - self.delta) / output_zero[output_prime > self.delta])
-        return epsilon_hat
+        reason_interval = prob_shift > self.delta
+        epsilon_hat = np.log((prob_shift[reason_interval] - self.delta) / prob_h0[reason_interval])
+        return epsilon_hat.max()
 
     def get_lowerbound_epsilon_fixed(self, x):
-        output_prime = ss.norm.sf(x, loc=self.shift * self.mu, scale=self.sigma)
-        output_zero = ss.norm.sf(x, loc=0.0, scale=self.sigma)
+        total_shift = self.epoch * self.unit_shift
+        prob_shift = ss.norm.sf(x, loc=total_shift, scale=self.total_sigma)
+        prob_h0 = ss.norm.sf(x, loc=0.0, scale=self.total_sigma)
 
-        epsilon_hat = np.log((output_prime[output_prime > self.delta] - self.delta) / output_zero[output_prime > self.delta])
-        return epsilon_hat
+        reason_interval = prob_shift > self.delta
+        epsilon_hat = np.log((prob_shift[reason_interval] - self.delta) / prob_h0[reason_interval])
+        return epsilon_hat.max()
 
 
-def show_epsilon():
-    noise_multiplier = 2.0
-    varepsilon = 0.0
+def get_hat_epsilon(epoch, sample_rate, noise_multiplier, concentration=0.99):
+    # update: X * r * C, X:activation times, r: concentration, C:grad norm
+    # noise: noise_multiplier * C * sqrt{T} / L
     grad_norm = 1.0
-    shift = (1-varepsilon) * grad_norm
     delta = 1e-5
-    num_step_per_epoch = 25
-    epoch = 2
+    N = 50000
 
-    for epoch in range(10, 13):
-        steps = epoch * num_step_per_epoch
-        sigma = noise_multiplier * grad_norm * np.sqrt(steps)
+    total_steps = epoch / sample_rate
+    L = sample_rate * N
 
-        mu = epoch
+    unit_shift = concentration * grad_norm
+    total_sigma = noise_multiplier * grad_norm * np.sqrt(total_steps)
 
-        m_minus = 0
-        m_plus = 1000
+    estimator = EpsilonEstimator(unit_shift=unit_shift, total_sigma=total_sigma, epoch=epoch, delta=delta)
 
-        x = np.arange(12, 1000, 0.01)
-        estimator = PoissonEstimator(shift=shift, sigma=sigma, mu=mu, delta=delta)
-        epsilon_hat = estimator.get_lowerbound_epsilon(x, m_minus=m_minus, m_plus=m_plus)
-        epsilon_hat_fixed = estimator.get_lowerbound_epsilon_fixed(x)
-        epsilon_hat_binom = estimator.get_lowerbound_epsilon_binom(x, m_minus=m_minus, m_plus=m_plus)
-        print(f'{epoch},{np.max(epsilon_hat)},{np.max(epsilon_hat_fixed)}, {np.max(epsilon_hat_binom)}, {np.max(epsilon_hat)/np.sqrt(epoch)}')
+    m_minus = 0
+    m_plus = max(int(10 * epoch * grad_norm), 30)
+    x = np.arange(2 * epoch * grad_norm, max(10 * total_sigma, 60), 0.02)
 
-    return
+    # hat_epsilon_poisson = estimator.get_lowerbound_epsilon_binom(x, m_minus=m_minus, m_plus=m_plus, total_steps=total_steps, sample_rate=sample_rate)
+    hat_epsilon = estimator.get_lowerbound_epsilon_binom(x, m_minus=m_minus, m_plus=m_plus, total_steps=total_steps, sample_rate=sample_rate)
+
+    return round(hat_epsilon.item(), 3)
 
 
-def check_backdoor_registrar():
-    path_to_registrar = './weights/test_probe_rgs_ex0.pth'
-    # registrar = DiffPrvBackdoorRegistrar()
+def show_multiple_epsilon(epoch, sample_rate, noise_multiplier, concentration=0.99, multiple=None):
+    if multiple is None:
+        print(f'hat epsilon:{get_hat_epsilon(epoch, sample_rate=sample_rate, noise_multiplier=noise_multiplier, concentration=concentration)}')
+    elif isinstance(multiple, str):
+        xlst = eval(multiple)
+        print(f'{multiple}, {xlst}')
+        ylst = []
+        if multiple == 'epoch':
+            for x in xlst:
+                ylst.append(get_hat_epsilon(epoch=x, sample_rate=sample_rate, noise_multiplier=noise_multiplier, concentration=concentration))
+        elif multiple == 'sample_rate':
+            for x in xlst:
+                ylst.append(get_hat_epsilon(epoch=epoch, sample_rate=x, noise_multiplier=noise_multiplier,
+                                                concentration=concentration))
+        elif multiple == 'noise_multiplier':
+            for x in xlst:
+                ylst.append(get_hat_epsilon(epoch=epoch, sample_rate=sample_rate, noise_multiplier=x,
+                                                concentration=concentration))
+        elif multiple == 'concentration':
+            for x in xlst:
+                ylst.append(get_hat_epsilon(epoch=epoch, sample_rate=sample_rate, noise_multiplier=noise_multiplier,
+                                            concentration=x))
+        print(f'epsilon, {ylst}')
+    else:
+        assert False, 'NOT SUPPORT'
+
+
+def check_backdoor_registrar(path2registrar, rand_head=False, thres=0.5):
+    # TODO: get information first, not plot in this function
+    # TODO: print epoch information
     backdoor_registrar = DiffPrvGradRegistrar()
-    backdoor_registrar.load_information(torch.load(path_to_registrar))
-    # delta_not_act = backdoor_registrar.get_change_by_activation(activation_count=0)
-    # delta_act = backdoor_registrar.get_change_by_activation(activation_count=1)
-    output_grads = backdoor_registrar.output_gradient_log(byepoch=False)
-    print(backdoor_registrar.check_v2class_largest())
+    backdoor_registrar.load_information(torch.load(path2registrar))
+
+    if rand_head:
+        output_grads = backdoor_registrar.output_gradient_log(byepoch=False)
+        backdoor_registrar.check_v2class_largest()
+        class_largest, labels = backdoor_registrar.get_largest_correct_classes()
+        grad_largest, grad_label = output_grads[:,class_largest], output_grads[:,labels]
+        backdoor_registrar.count_nonzero_grad_by_epoch(noise_thres=1e-3)
+        grad_largest_act, grad_largest_inact = grad_largest[grad_largest.abs() > thres], grad_largest[grad_largest.abs() <= thres]
+        grad_label_act, grad_label_inact = grad_label[grad_label.abs() > thres], grad_label[grad_label.abs() <= thres]
+        return (grad_largest_act, grad_largest_inact), (grad_label_act, grad_label_inact)
+
+    else:
+        output_grads = backdoor_registrar.output_gradient_log(byepoch=False)
+        backdoor_registrar.count_nonzero_grad_by_epoch(noise_thres=1e-3)
+        output_grad_act, output_grad_inact = output_grads[output_grads.abs() > thres], output_grads[output_grads.abs() <= thres]
+        return (output_grad_act, output_grad_inact)
+
+
+def plot_activation(grad_act, grad_inact, save_path=None):
+    print(f'act, num:{len(grad_act)}, mean:{grad_act.mean().item()} std:{grad_act.std().item()}')
+    print(f'inact, num:{len(grad_inact)}, mean:{grad_inact.mean().item()} std:{grad_inact.std().item()}')
+
+
+    plt.hist([grad_inact.tolist(),grad_act.tolist()], alpha=1.0, label=['disappear','appear'], color=['blue', 'orange'])
+    print(grad_act.tolist())
+
+    plt.yscale('log')
+    plt.title(None)
+    plt.legend(loc='upper right')
+    plt.xlabel('gradient')
+    plt.ylim(bottom=1)
+    plt.tight_layout()
+    if save_path is not None:
+        plt.savefig(save_path)
+    plt.show()
 
 
 if __name__ == '__main__':
-    show_epsilon()
-    # check_backdoor_registrar()
+    # show_multiple_epsilon(epoch=12, sample_rate=0.01, noise_multiplier=[0.5,0.75,1.0,1.25,1.5,2.0], concentration=1.0, multiple='noise_multiplier')
+    # path2registrar = './weights/test_probe_rgs_ex0.pth'
+    # output_large, output_label = check_backdoor_registrar(path2registrar, rand_head=True, thres=0.01)
+    # plot_activation(output_large[0], output_large[1])
 
-    """
-    clip = 1.0
-    noise = 0.5
-    L = 512
-    eta = 0.2
-    
-    print(f'number: {len(delta_not_act)}, mean value:{delta_not_act.mean()}, standard error:{delta_not_act.std()}')
-    print(f'number: {len(delta_act)}, mean value:{delta_act.mean()}, standard error:{delta_act.std()}')
-    std_th = eta * noise * clip / L
-    mean_th = -1.0 * eta * clip / L
-    print(f'theoretical mean:{mean_th}, std:{std_th}')
-
-    fig = plt.figure()
-    ax2 = fig.add_subplot(111)
-
-    ax2.hist(delta_act, label='activated', color='red', alpha=0.6)
-    ax2.legend(loc='upper left')
-    ax2.set_ylim(0, 32)
-    plt.xlabel(r'$\Delta b_{u^\star}$')
-
-    ax1 = ax2.twinx()
-    ax1.hist(delta_not_act, label='not activated', color='blue', alpha=0.2)
-    ax1.legend(loc='upper right')
+    path2registrar = './weights/test_full_rgs_ex0.pth'
+    output = check_backdoor_registrar(path2registrar, rand_head=False, thres=0.01)
+    plot_activation(output[0], output[1], save_path=None)
 
 
-    plt.title(None)
-    plt.tight_layout()
-    plt.savefig('experiments/results/20230901_bert_vanilla/dp_delta_dist.pdf')
-    plt.show()
-    """
 
