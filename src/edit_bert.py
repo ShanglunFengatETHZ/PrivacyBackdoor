@@ -911,7 +911,7 @@ class BertMonitor:
                                                         'related_channels': related_channels,
                                                         'activation': hs_bkd[asb[0], related_channels, asb[1]], 'step':step})
 
-    def show_possible_sequences(self, approach='all', logit_thres=0.0):
+    def show_possible_sequences(self, approach='all', logit_thres=0.0, verbose=False):
         #  {'input': inputs[asb[0]], 'logit': logits[asb[0]], 'related_channels': related_channels,
         #  'activation': hs_bkd[asb[0], related_channels, asb[1]]}
 
@@ -949,13 +949,15 @@ class BertMonitor:
         elif approach == 'semantics':
             for j in range(len(self.bkd_indices)):
                 info_this_bkd = self.activation_history[j]
-                print(f'backdoor:{j}, all activated:{len(info_this_bkd)}')
+                if verbose:
+                    print(f'backdoor:{j}, all activated:{len(info_this_bkd)}')
 
                 if len(info_this_bkd) > 1:
                     raw_candidate = [item for item in info_this_bkd if item['related_channels'][0] == 1 and len(item['related_channels']) > 1]
                     logit_max = [rc["logit"].max() for rc in raw_candidate]
-                    print(f'backdoor:{j}, basic satisfied:{len(raw_candidate)}')
-                    print(f'max logit :{logit_max}')
+                    if verbose:
+                        print(f'basic satisfied:{len(raw_candidate)}', end=';')
+                        print(f'max logit :{logit_max}')
 
                     if len(raw_candidate) > 0:
                         if max(logit_max) < logit_thres:
@@ -972,7 +974,6 @@ class BertMonitor:
                     real_sequence_lst[j].append(info_this_bkd[0]['input'])
                 else:
                     real_sequence_lst[j].append(None)
-                print('\n')
 
         else:
             pass

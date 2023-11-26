@@ -1,12 +1,27 @@
+import argparse
 import torch
+import sys
+import os
+from transformers import BertTokenizer
+sys.path.append(os.path.dirname(sys.path[0]))
+sys.path.append(os.path.dirname(sys.path[0])+'/src')
 import src.tools as tools
 from src.edit_bert import BertMonitor
-from transformers import BertTokenizer
 import numpy as np
 
 
+def parse_args():
+    parser = argparse.ArgumentParser(description='INPUT the parameters of recovery')
+    parser.add_argument('--path', type=str)
+    parser.add_argument('--save_path', default=None)
+    parser.add_argument('--verbose', type=bool, default=False)
+
+    return parser.parse_args()
+
+
 def print_reconstruction_to_table(path, max_len,  posi_lst, posi_similarity, word_code_lst, smlar_1st_lst, alter_code_lst,
-                                  smlar_2nd_lst, monitor, tokenizer, na_notation='', output_items=[]):
+                                  smlar_2nd_lst, monitor, tokenizer, na_notation='', output_items=None):
+    # used when output reconstructed sentences in a table
     with open(path, 'wt') as f:
         for j in range(len(word_code_lst)):
             word_code, smlar_1st, alter_code, smlar_2nd = word_code_lst[j], smlar_1st_lst[j], alter_code_lst[j], smlar_2nd_lst[j]
@@ -97,32 +112,14 @@ def print_final_presentation(path, reconstruction_lst, groundtruth_lst):
 
 
 if __name__ == '__main__':
-    output_zero = True
 
-    path = './weights/20230918_complete/bert_relu_craftedhead_trec6_monitor.pth'
-    save_path_pre = None
-    # save_path_pre = './experiments/results/20230918_complete/bert_relu_craftedhead_trec6'
+    args = parse_args()
 
-    # path = './weights/20230918_complete/bert_relu_randhead_trec50_monitor.pth'
-    # save_path_pre = './experiments/results/20230918_complete/bert_relu_randhead_trec50'
-
-    # path = './weights/bert_gelu_randhead_trec50_monitor.pth'
-    # save_path_pre = None
-    # save_path_pre = './experiments/results/20230918_complete/bert_gelu_randhead_trec50'
-
-    # path = './weights/bert_gelu_craftedhead_trec6_monitor.pth'
-    # save_path_pre = './experiments/results/20230918_complete/bert_gelu_craftedhead_trec6'
-    # save_path_pre = None
-
-    # path = './weights/txbkd_exp_smallvo_monitor.pth'
-    # save_path_full = './experiments/results/20230901_bert_vanilla/reconstruct_full_exp_smallvo.csv'
-    # save_path_pre = './experiments/results/20230901_bert_vanilla/reconstruct_pre_exp_smallvo.txt'
-
-    save_path_full = None
-    max_len = 24
-    save_path_word = None
-    save_path_position = None
-    save_path_alternative = None
+    # path = './weights/{:group:}/bert_relu_craftedhead_trec6_monitor.pth'
+    # save_path_pre = './experiments/results/{:group:}/bert_relu_craftedhead_trec6'
+    path = args.path
+    save_path_pre = args.save_path
+    verbose = args.verbose
 
     skip = True
     print_second = True
@@ -144,7 +141,7 @@ if __name__ == '__main__':
 
     delta_bkd_bias_printable, delta_bkd_bias, delta_bkd_estimate_printable, delta_bkd_estimate = monitor.get_backdoor_change()
 
-    possible_sequences = monitor.show_possible_sequences(approach='semantics', logit_thres=1.0)
+    possible_sequences = monitor.show_possible_sequences(approach='semantics', logit_thres=1.0, verbose=verbose)
 
     reconstruction_lst = []
     groundtruth_lst = []
@@ -155,7 +152,13 @@ if __name__ == '__main__':
                                                                               target_entries=[monitor.clean_position_indices, indices_ft])
 
         posi_idx, similarity, second_similarity = monitor.get_digital_code(sequence=posi_code_this_seq, dictionary=position_code_used)
-        word_code, similarity_1st, alternative_code, similarity_2nd = monitor.get_text_digital_code_this_sequence(features_this_seq, posi_idx, indices_ft,  centralize=True, output_zero=output_zero)
+        word_code, similarity_1st, alternative_code, similarity_2nd = monitor.get_text_digital_code_this_sequence(features_this_seq, posi_idx, indices_ft,  centralize=True, output_zero=True)
+
+        similarity = [round(x, 3) for x in similarity.tolist()]
+        second_similarity = [round(x, 3) for x in second_similarity.tolist()]
+        similarity_1st = [round(x, 3) for x in similarity_1st]
+        similarity_2nd = [round(x, 3) for x in similarity_2nd]
+
         posi_lst.append(posi_idx)
         posi_similarity.append(similarity)
         word_code_lst.append(word_code)
@@ -169,42 +172,26 @@ if __name__ == '__main__':
         print(f'word indices:{word_code}')
         reconstruction = monitor.get_text(tokenizer, word_code, skip_special_tokens=skip)
         reconstruction_lst.append(reconstruction)
-        print(f'text:{reconstruction}')
+        print(f'reconstructed sentences:{reconstruction}')
         groundtruth_lst.append([])
         if len(possible_sequences[j]) > 10:
-            print(f'possible sequences: MESS')
+            print(f'ground truth: MESS')
             groundtruth_lst[j].append('MESS')
         elif len(possible_sequences[j]) == 0:
-            print(f'possible sequences: NONE')
+            print(f'ground truth: NONE')
             groundtruth_lst[j].append('NONE')
         else:
             for seq in possible_sequences[j]:
                 if seq is not None:
                     possible_groundtruth = monitor.get_text(tokenizer, seq, skip_special_tokens=skip)
-                    print(f'possible sequences:{possible_groundtruth}')
+                    print(f'ground truth:{possible_groundtruth}')
                     groundtruth_lst[j].append(possible_groundtruth)
-
         print(f'word similarity:{similarity_1st}')
-        print(f'alternative text:{monitor.get_text(tokenizer, alternative_code, skip_special_tokens=skip)}')
+
+        print(f'alternative ground truth:{monitor.get_text(tokenizer, alternative_code, skip_special_tokens=skip)}')
         if print_second:
-            print(f'word second similarity:{similarity_2nd}')
+            print(f'alternative word similarity:{similarity_2nd}')
         print('\n')
-
-    if save_path_full is not None:
-        print_reconstruction_to_table(save_path_full, max_len, posi_lst, posi_similarity, word_code_lst, smlar_1st_lst, alter_code_lst, smlar_2nd_lst, monitor, tokenizer)
-
-
-    if save_path_word is not None:
-        print_reconstruction_to_table(save_path_word, max_len, posi_lst, posi_similarity, word_code_lst, smlar_1st_lst,
-                                      alter_code_lst, smlar_2nd_lst, monitor, tokenizer, output_items=['word'])
-
-    if save_path_position is not None:
-        print_reconstruction_to_table(save_path_position, max_len, posi_lst, posi_similarity, word_code_lst, smlar_1st_lst,
-                                      alter_code_lst, smlar_2nd_lst, monitor, tokenizer, output_items=['position'])
-
-    if save_path_alternative is not None:
-        print_reconstruction_to_table(save_path_alternative, max_len, posi_lst, posi_similarity, word_code_lst, smlar_1st_lst,
-                                      alter_code_lst, smlar_2nd_lst, monitor, tokenizer, output_items=['alternative'])
 
     if save_path_pre is not None:
         print_final_presentation(save_path_pre, reconstruction_lst=reconstruction_lst, groundtruth_lst=groundtruth_lst)

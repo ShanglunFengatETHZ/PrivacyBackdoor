@@ -3,13 +3,11 @@ import torch
 from torchvision.models import vit_b_32
 import os
 import sys
+sys.path.append(os.path.dirname(sys.path[0]))
 sys.path.append(os.path.dirname(sys.path[0])+'/src')
-from tools import plot_recovery
-from edit_vit import ViTWrapper
-from model_adv import NativeMLP
-
-
-
+from src.tools import plot_recovery
+from src.edit_vit import ViTWrapper
+from src.model_adv import NativeMLP
 
 
 def parse_args():
@@ -19,8 +17,6 @@ def parse_args():
     parser.add_argument('--plot_mode', type=str, default='recovery')
     parser.add_argument('--inches', nargs='+', type=float, default=None)
     parser.add_argument('--bias', nargs='+', type=float, default=(0.0, 0.0, 0.0))
-    # if data normalize, bias=(0.,0.,0.), scaling=(32.0, 32.0, 32.0); if not, bias=(0.5, 0.5, 0.5) scaling=(16sqrt(2), 16sqrt(2), 16sqrt(2))
-    # in the vit case, scaling ~ 0.2, bias ~ 0.5
     parser.add_argument('--scaling', nargs='+', type=float, default=(1.0, 1.0, 1.0))
     parser.add_argument('--save_path', type=str, default=None)
     parser.add_argument('--arch', type=str, choices=['toy', 'vit'])
@@ -62,7 +58,6 @@ def extract_information_vit(classifier, bias=(0.0, 0.0, 0.0), scaling=(1.0, 1.0,
 
 if __name__ == '__main__':
     # use training dataset for input, use test set for constructing.
-
 
     args = parse_args()
 
