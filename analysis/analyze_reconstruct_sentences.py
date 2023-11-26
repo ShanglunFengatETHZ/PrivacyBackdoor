@@ -14,7 +14,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description='INPUT the parameters of recovery')
     parser.add_argument('--path', type=str)
     parser.add_argument('--save_path', default=None)
-    parser.add_argument('--verbose', type=bool, default=False)
+    parser.add_argument('--verbose', type=bool, default=False, help='whether to print more information about activation times')
 
     return parser.parse_args()
 
