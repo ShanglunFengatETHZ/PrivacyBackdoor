@@ -89,5 +89,5 @@ if __name__ == '__main__':
     ax_right.set_xlabel(r'$x^\prime$', {'size': 20})
 
 
-    plt.savefig('../experiments/pics/scaling.eps')
+    # plt.savefig('../experiments/pics/scaling.eps')
     plt.show()

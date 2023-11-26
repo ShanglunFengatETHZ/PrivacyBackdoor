@@ -4,7 +4,7 @@ from torchvision.models import vit_b_32, ViT_B_32_Weights
 
 
 def difference(x_a, x_b, indices, sample, channel):
-    return torch.norm(x_a[sample, channel,indices] - x_b[sample,channel,indices]) / torch.norm(x_a[sample,channel, indices])
+    return torch.norm(x_a[sample, channel, indices] - x_b[sample, channel, indices]) / torch.norm(x_a[sample, channel, indices])
 
 
 if __name__ == '__main__':

@@ -3,9 +3,9 @@ import matplotlib.pyplot as plt
 import argparse
 import datetime
 import math
-from model import ToyConvEncoder
-from data import load_dataset, get_subdataset, get_dataloader
-from tools import pass_forward, moving_window_picker, plot_recovery
+from src.model import ToyConvEncoder
+from src.data import load_dataset, get_subdataset, get_dataloader
+from src.tools import pass_forward, moving_window_picker, plot_recovery
 
 
 def parse_args():

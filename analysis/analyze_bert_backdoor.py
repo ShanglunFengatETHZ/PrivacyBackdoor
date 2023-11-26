@@ -99,7 +99,8 @@ def print_final_presentation(path, reconstruction_lst, groundtruth_lst):
 if __name__ == '__main__':
     output_zero = True
 
-    # path = './weights/20230918_complete/bert_relu_craftedhead_trec6_monitor.pth'
+    path = './weights/20230918_complete/bert_relu_craftedhead_trec6_monitor.pth'
+    save_path_pre = None
     # save_path_pre = './experiments/results/20230918_complete/bert_relu_craftedhead_trec6'
 
     # path = './weights/20230918_complete/bert_relu_randhead_trec50_monitor.pth'
@@ -109,8 +110,8 @@ if __name__ == '__main__':
     # save_path_pre = None
     # save_path_pre = './experiments/results/20230918_complete/bert_gelu_randhead_trec50'
 
-    path = './weights/bert_gelu_craftedhead_trec6_monitor.pth'
-    save_path_pre = './experiments/results/20230918_complete/bert_gelu_craftedhead_trec6'
+    # path = './weights/bert_gelu_craftedhead_trec6_monitor.pth'
+    # save_path_pre = './experiments/results/20230918_complete/bert_gelu_craftedhead_trec6'
     # save_path_pre = None
 
     # path = './weights/txbkd_exp_smallvo_monitor.pth'

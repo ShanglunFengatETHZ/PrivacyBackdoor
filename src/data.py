@@ -185,28 +185,32 @@ def get_dataloader(ds0, batch_size, num_workers, ds1=None, shuffle=False, collat
 
 if __name__ == '__main__':
 
+    """
     root = '../../cifar100'
     dataset = 'cifar100'
     train_dataset, test_dataset, resolution, classes = load_dataset(root, dataset, is_normalize=True, resize=224, is_augment=False, inlaid=None)
     print("DATASET")
-
-
     """
+
+
+
+
     tokenizer = BertTokenizer.from_pretrained('bert-base-uncased', do_lower_case=True)
     load_text_dataset(root=None, dataset='trec', tokenizer=tokenizer, max_len=64)
     print('LOAD TEXT DATASET')
-    """
 
     """
     root = '../../caltech-101'
     dataset = 'caltech101'
     train_dataset, test_dataset, resolution, classes = load_dataset(root, dataset, is_normalize=True, resize=224,
                                                                     is_augment=False, inlaid=None)
-    print("DATASET")
-
-    dataloader = get_dataloader(train_dataset, batch_size=128, num_workers=0, ds1=None, collate_fn=None)
-    for X, y in dataloader:
-        print('what is wrong?')
+    print(f"DATASET, {len(train_dataset)}")
     """
+
+
+    # dataloader = get_dataloader(train_dataset, batch_size=128, num_workers=0, ds1=None, collate_fn=None)
+    # for X, y in dataloader:
+    #    print('what is wrong?')
+
 
 

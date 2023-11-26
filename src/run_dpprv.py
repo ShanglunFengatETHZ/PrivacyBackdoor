@@ -181,6 +181,7 @@ def dp_train(num_epochs, classifier, train_loader, test_loader, optimizer, priva
     acc_lst = []
     epsilon_lst = []
     delta_lst = []
+    classifier = classifier.to(device)
     for epoch in range(num_epochs):
         backdoor_registrar.update_epoch(epoch)
         if epoch == 0:

@@ -1,9 +1,15 @@
 import argparse
 import torch
-from tools import plot_recovery
 from torchvision.models import vit_b_32
+import os
+import sys
+sys.path.append(os.path.dirname(sys.path[0])+'/src')
+from tools import plot_recovery
 from edit_vit import ViTWrapper
 from model_adv import NativeMLP
+
+
+
 
 
 def parse_args():
@@ -20,12 +26,13 @@ def parse_args():
     parser.add_argument('--arch', type=str, choices=['toy', 'vit'])
     parser.add_argument('--chw', nargs='+', type=int, default=None)
     parser.add_argument('--thres', type=float, default=0.0)
+    parser.add_argument('--ids', nargs='+', type=int, default=0)
 
     return parser.parse_args()
 
 
 def extract_information_toy(classifier, bias=(0.0, 0.0, 0.0), scaling=(1.0, 1.0, 1.0), hw=None, inches=None,
-                        plot_mode='recovery', save_path=None, chw=None):
+                        plot_mode='recovery', save_path=None, chw=None, ids=None):
 
     if plot_mode == 'recovery':
         images = classifier.reconstruct_images(*chw)
@@ -33,6 +40,9 @@ def extract_information_toy(classifier, bias=(0.0, 0.0, 0.0), scaling=(1.0, 1.0,
     elif plot_mode == 'raw':
         images = classifier.show_possible_images('mix')
         plot_recovery(images, hw=hw, inches=inches, save_path=save_path, scaling=scaling, bias=bias)
+    elif plot_mode == 'single':
+        all_activate_image = [img_info['image'] for id in ids for img_info in classifier.possible_images[id]]
+        plot_recovery(all_activate_image, hw=hw, inches=inches, save_path=save_path, scaling=scaling, bias=bias)
     else:
         assert False, 'please input the correct plot mode'
 
@@ -52,6 +62,8 @@ def extract_information_vit(classifier, bias=(0.0, 0.0, 0.0), scaling=(1.0, 1.0,
 
 if __name__ == '__main__':
     # use training dataset for input, use test set for constructing.
+
+
     args = parse_args()
 
     bias = tuple(args.bias * 3) if len(args.bias) == 1 else tuple(args.bias)
@@ -65,7 +77,7 @@ if __name__ == '__main__':
         classifier = NativeMLP(**model_dict['arch'])
         classifier.load_information(model_dict)
         extract_information_toy(classifier, bias=bias, scaling=scaling, hw=args.hw, inches=args.inches,
-                                plot_mode=args.plot_mode, save_path=args.save_path, chw=args.chw)
+                                plot_mode=args.plot_mode, save_path=args.save_path, chw=args.chw, ids=args.ids)
     elif args.arch == 'vit':
         model_dict = torch.load(args.path, map_location='cpu')
         model0 = vit_b_32()

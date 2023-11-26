@@ -146,7 +146,7 @@ dmypy.json
 # pytype static type analyzer
 .pytype/
 
-# Cython debug symbols
+# Cython debug_arxiv symbols
 cython_debug/
 
 # PyCharm
@@ -157,23 +157,23 @@ cython_debug/
 #.idea/
 analysis/analyze_bert_backdoor.py
 analysis/analyze_bert_backdoor.py
-analysis/check_difference.py
+debug_arxiv/vitrobust_check_difference.py
 analysis/analyze_bert_backdoor.py
 analysis/analyze_dp_backdoor.py
-analysis/check_difference.py
-analysis/debug.py
-analysis/debug_gradient_filter.py
+debug_arxiv/vitrobust_check_difference.py
+debug_arxiv/conv_debug.py
+debug_arxiv/debug_gradient_filter.py
 analysis/debug_zerotracktransformer.py
 analysis/analyze_bert_backdoor.py
 analysis/analyze_dp_backdoor.py
-analysis/check_difference.py
-analysis/debug.py
-analysis/debug_gradient_filter.py
+debug_arxiv/vitrobust_check_difference.py
+debug_arxiv/conv_debug.py
+debug_arxiv/debug_gradient_filter.py
 analysis/debug_zerotracktransformer.py
-analysis/plot_bipolarization.py
+drawpicture/schematic_bipolarization.py
 analysis/plot_gelu.py
-analysis/plot_scaling.py
-analysis/plot_mlp.py
-analysis/stat.py
-analysis/stat_shiftdataset.py
-analysis/stat_subimage.py
+drawpicture/schematic_geluscaling.py
+drawpicture/schematic_mlp.py
+debug_arxiv/stat.py
+debug_arxiv/stat_shiftdataset.py
+debug_arxiv/stat_subimage.py

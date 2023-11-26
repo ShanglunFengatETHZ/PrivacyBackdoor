@@ -162,8 +162,8 @@ def plot_recovery(images, bias=(0.0, 0.0, 0.0), scaling=(1.0, 1.0, 1.0), hw=None
         w = math.ceil(num / h)
     else:
         h, w = hw
+    fig, axs = plt.subplots(h, w, squeeze=False)
 
-    fig, axs = plt.subplots(h, w)
 
     if inches is None:
         px = 1 / plt.rcParams['figure.dpi']
@@ -201,9 +201,14 @@ def plot_recovery(images, bias=(0.0, 0.0, 0.0), scaling=(1.0, 1.0, 1.0), hw=None
         ax.axes.get_yaxis().set_visible(False)
         ax.axes.get_xaxis().set_visible(False)
 
+        ax.axes.spines['top'].set_linewidth(0)
+        ax.axes.spines['right'].set_linewidth(0)
+        ax.axes.spines['bottom'].set_linewidth(0)
+        ax.axes.spines['left'].set_linewidth(0)
+
     plt.axis('off')
-    plt.tight_layout()
-    fig.subplots_adjust(wspace=0, hspace=0)
+    # plt.tight_layout()
+    fig.subplots_adjust(wspace=0.1, hspace=0.1, left=0, right=1, top=1, bottom=0)
     if save_path is not None:
         plt.savefig(save_path)
 
