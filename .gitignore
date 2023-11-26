@@ -1,7 +1,8 @@
 # ignored files
 experiments
 weights
-tools
+debug_arxiv
+drawpicture
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -155,25 +156,6 @@ cython_debug/
 #  and can be added to the global gitignore or merged into this file.  For a more nuclear
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
-analysis/analyze_bert_backdoor.py
-analysis/analyze_bert_backdoor.py
-debug_arxiv/vitrobust_check_difference.py
-analysis/analyze_bert_backdoor.py
-analysis/analyze_dp_backdoor.py
-debug_arxiv/vitrobust_check_difference.py
-debug_arxiv/conv_debug.py
-debug_arxiv/debug_gradient_filter.py
-analysis/debug_zerotracktransformer.py
-analysis/analyze_bert_backdoor.py
-analysis/analyze_dp_backdoor.py
-debug_arxiv/vitrobust_check_difference.py
-debug_arxiv/conv_debug.py
-debug_arxiv/debug_gradient_filter.py
-analysis/debug_zerotracktransformer.py
-drawpicture/schematic_bipolarization.py
-analysis/plot_gelu.py
-drawpicture/schematic_geluscaling.py
-drawpicture/schematic_mlp.py
-debug_arxiv/stat.py
-debug_arxiv/stat_shiftdataset.py
-debug_arxiv/stat_subimage.py
+
+# Mac
+.DS_Store
