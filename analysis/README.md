@@ -3,6 +3,7 @@
 ## Reconstruct from ViT
 ```bash
 python analysis/reconstruct_images.py --path ./weights/GROUP/vit_relu_randhead_caltech.pth --plot_mode recovery --arch vit --hw 4 8  --inches 4.35 2.15 --scaling 0.229 0.224 0.225 --bias 0.485 0.456 0.406
+python analysis/reconstruct_images.py --path ./weights/GROUP/vit_relu_randhead_caltech.pth --plot_mode raw --arch vit --hw 4 8  --inches 4.35 2.15
 ```
 
 `--path`: where to load the fine-tuned ViT
