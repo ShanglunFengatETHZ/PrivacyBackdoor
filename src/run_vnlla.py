@@ -1,5 +1,5 @@
 import torch
-from model import make_an_toy_net, make_conv_net
+from model_vnlla import make_an_toy_net, make_conv_net
 from data import load_dataset, get_subdataset, get_dataloader
 from train import train_model
 from torch.optim import SGD

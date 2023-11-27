@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.utils.data as data
 from tools import pass_forward, cal_set_difference_seq
 from data import load_dataset, get_subdataset, get_dataloader
-from model_adv import DiffPrvBackdoorRegistrar, DiffPrvGradRegistrar, InitEncoderMLP, EncoderMLP
+from model_mlp import DiffPrvBackdoorRegistrar, DiffPrvGradRegistrar, InitEncoderMLP, EncoderMLP
 from opacus.validators import ModuleValidator
 from opacus import PrivacyEngine
 import torch.optim as optim

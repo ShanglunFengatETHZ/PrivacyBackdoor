@@ -4,11 +4,10 @@ import logging
 import yaml
 import os
 import random
-from run_native import build_model
-from run_dpprv import build_public_model, build_dp_model
+from run_mlp import build_mlp_model
 from run_vit import build_vision_transformer
 from run_text_classification import build_bert_classifier
-from run_mlp_native import build_mlp_model
+from run_dpprv import build_public_model, build_dp_model
 
 
 def parse_args():
@@ -55,24 +54,30 @@ def main():
         args = yaml.load(f, Loader=yaml.FullLoader)
     logger.info('Successfully read the arguments')
 
-    if mode == 'vnlla':  # vanilla, train linear layer or cnn for
+    """
+     # vanilla design, used for wx + cb, where c >> 1
+     # include content about linear module and CNN
+     # Not maintained, not recommended for use, does not appear in official articles
+    if mode == 'vnlla': 
         info_dataset, info_model, info_train, save_path = args['DATASET'], args['MODEL'], args['TRAIN'], args['SAVE_PATH']
         build_model(info_dataset, info_model, info_train, logger=logger, save_path=save_path)
-    elif mode == 'mlpvn':
+    """
+
+    if mode == 'mlpvn':  # backdoor initialization
         info_dataset, info_model, info_train, save_path = args['DATASET'], args['MODEL'], args['TRAIN'], args['SAVE_PATH']
         build_mlp_model(info_dataset, info_model, info_train, logger=logger, save_path=save_path)
-    elif mode == 'stdtr':  # standard training, this is mostly used for pre-training for
-        info_dataset, info_model, info_train, save_path = args['DATASET'], args['MODEL'], args['TRAIN'], args['SAVE_PATH']
-        build_public_model(info_dataset, info_model, info_train, logger=logger, save_path=save_path)
-    elif mode == 'dpbkd': # differential privacy for backdoor
-        info_dataset, info_model, info_train, info_target, save_path = args['DATASET'], args['MODEL'], args['TRAIN'], args['TARGET'], args['SAVE_PATH']
-        build_dp_model(info_dataset, info_model, info_train, info_target=info_target, logger=logger, save_path=save_path)
-    elif mode == 'vibkd':  # vision backdoor, implement on vision transform
+    elif mode == 'vibkd':  # backdoor initialization, vision transformer, can also be used for fine-tuning
         info_dataset, info_model, info_train, save_path = args['DATASET'], args['MODEL'], args['TRAIN'], args['SAVE_PATH']
         build_vision_transformer(info_dataset, info_model, info_train, logger=logger, save_path=save_path)
-    elif mode == 'txbkd': # text backdoor, implement on Bert
+    elif mode == 'txbkd':  # backdoor initialization, BERT
         info_dataset, info_model, info_train, save_path = args['DATASET'], args['MODEL'], args['TRAIN'], args['SAVE_PATH']
         build_bert_classifier(info_dataset, info_model, info_train, logger=logger, save_path=save_path)
+    elif mode == 'stdtr':  # standard training of MLP, mostly used for pre-training of Differential Privacy
+        info_dataset, info_model, info_train, save_path = args['DATASET'], args['MODEL'], args['TRAIN'], args['SAVE_PATH']
+        build_public_model(info_dataset, info_model, info_train, logger=logger, save_path=save_path)
+    elif mode == 'dpbkd':  # backdoor initialization,
+        info_dataset, info_model, info_train, info_target, save_path = args['DATASET'], args['MODEL'], args['TRAIN'], args['TARGET'], args['SAVE_PATH']
+        build_dp_model(info_dataset, info_model, info_train, info_target=info_target, logger=logger, save_path=save_path)
 
     os.rename(path_to_config, config_file)
 

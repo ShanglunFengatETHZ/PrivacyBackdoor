@@ -1,7 +1,7 @@
 import torch
 from data import load_dataset, get_subdataset, get_dataloader
 from train import train_model
-from model_adv import NativeMLP, native_bait_selector
+from model_mlp import NativeMLP, native_bait_selector
 from torch.optim import SGD
 from tools import weights_generator
 

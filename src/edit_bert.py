@@ -993,6 +993,7 @@ def show_vanilla(outputs, classifier):
 
 
 if __name__ == '__main__':
+    # codes for debugging
     start_from_scratch = False
 
     num_backdoors = 32
@@ -1041,12 +1042,6 @@ if __name__ == '__main__':
         native_attention_it_v1 = NativeOneAttentionEncoder(bertmodel=classifier_v1.bert, use_intermediate=True, before_intermediate=True)
         native_attention_at_v1 = NativeOneAttentionEncoder(bertmodel=classifier_v1.bert, use_intermediate=False)
     else:
-        # path = './weights/test_gelu_random_monitor.pth'
-        # path = './weights/test_gelu_monitor.pth'
-        # path = './weights/txbkd_random_heads_monitor.pth'
-        # path = './weights/bert_relu_craftedhead_trec6_monitor.pth'
-        # path = './weights/bert_relu_randhead_trec50_monitor.pth'
-        # path = './weights/bert_gelu_randhead_trec50_monitor.pth'
         path = './weights/bert_gelu_craftedhead_trec6_monitor.pth'
 
         monitor_info = torch.load(path, map_location='cpu')

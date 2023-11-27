@@ -7,7 +7,7 @@ sys.path.append(os.path.dirname(sys.path[0]))
 sys.path.append(os.path.dirname(sys.path[0])+'/src')
 from src.tools import plot_recovery
 from src.edit_vit import ViTWrapper
-from src.model_adv import NativeMLP
+from src.model_mlp import NativeMLP
 
 
 def parse_args():

@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 from opacus.utils.batch_memory_manager import BatchMemoryManager
 from edit_vit import ViTWrapper
-from model_adv import NativeMLP
+from model_mlp import NativeMLP
 
 
 # TODO: use the following codes to control the random values

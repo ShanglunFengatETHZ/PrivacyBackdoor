@@ -1083,6 +1083,8 @@ def _debug_centralize_conv():
 
 
 if __name__ == '__main__':
+    # codes for debugging
+
     debug_mode = 'backdoor'
     num_backdoors = 64
     is_double = False
