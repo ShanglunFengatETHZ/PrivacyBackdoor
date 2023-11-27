@@ -30,11 +30,11 @@ python analysis/reconstruct_images.py --path ./weights/GROUP/vit_relu_randhead_c
 python analysis/analyze_reconstruct_sentences.py --path ./weights/GROUP/bert_gelu_randhead_trec50_monitor.pth --save_path ./text --verbose True
 ```
 
-`path`: where to load the information of MONITOR
+`--path`: where to load the information of MONITOR
 
-`save_path`: where to save the ground truth sentences and reconstructed sentences
+`--save_path`: where to save the ground truth sentences and reconstructed sentences
 
-`verbose`: if `True`, print how many reasonable ground truth sentences for each backdoor unit.
+`--verbose`: if `True`, print how many reasonable ground truth sentences for each backdoor unit.
 
 
 ## Gradient distribution of Differential Privacy
@@ -42,10 +42,10 @@ python analysis/analyze_reconstruct_sentences.py --path ./weights/GROUP/bert_gel
 python analysis/analyze_diffprv.py --path ./weights/20231005_diffprv/onlyprobe_epsilon3_rgs_ex0.pth  --save_path ./pic --biconcentration True
 ```
 
-`path`: where to load weights from
+`--path`: where to load weights from
 
-`save_path`: where to save drawn pictures
+`--save_path`: where to save drawn pictures
 
-`biconcentration`: if `True`, the gradient concentrates on two weights(used for random head setting) instead of one weight(use for MLP setting)
+`--biconcentration`: if `True`, the gradient concentrates on two weights(used for random head setting) instead of one weight(use for MLP setting)
 
     
