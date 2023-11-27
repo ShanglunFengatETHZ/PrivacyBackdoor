@@ -11,8 +11,8 @@ from src.model_adv import DiffPrvGradRegistrar
 
 def parse_args():
     parser = argparse.ArgumentParser(description='INPUT the parameters of recovery')
-    parser.add_argument('--path', type=str)  # './weights/20231005_diffprv/mlp_epsilon3_rgs_ex0.pth', './weights/20231005_diffprv/onlyprobe_epsilon3_rgs_ex0.pth'
-    parser.add_argument('--save_path', default=None)  # './experiments/results/20231005_diffprv/mlp_epsilon3_distribution.eps'
+    parser.add_argument('--path', type=str)
+    parser.add_argument('--save_path', default=None)
     parser.add_argument('--biconcentration', type=bool, default=False)
 
     return parser.parse_args()
