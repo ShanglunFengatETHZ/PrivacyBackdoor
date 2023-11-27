@@ -158,7 +158,7 @@ def plot_recovery(images, bias=(0.0, 0.0, 0.0), scaling=(1.0, 1.0, 1.0), hw=None
     num = len(images)
     res_h, res_w = images[0].shape[-2], images[0].shape[-1]
     if hw is None:
-        h = math.ceil(math.sqrt(num) * 6 / 5)  # h > w
+        h = math.ceil(math.sqrt(num))  # h > w
         w = math.ceil(num / h)
     else:
         h, w = hw
