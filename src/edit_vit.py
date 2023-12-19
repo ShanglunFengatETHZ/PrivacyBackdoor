@@ -114,6 +114,9 @@ def edit_conv(module, indices_img, conv_pixel_extractor, indices_zero=None, use_
         assert num_entries == num_pixels, f'{num_entries}, {num_pixels}'
         module.weight.data[indices_img] = conv_pixel_extractor
 
+def edit_pos_embedding(position_embedding):
+    pass
+
 
 def get_output_conv(inputs2model, extracted_pixels, segment_length=32, pixel_multiplier=1.0,
                     channel_extract_approach='gray', output_mirror=False, is_centralize=False):
@@ -131,7 +134,7 @@ def get_output_conv(inputs2model, extracted_pixels, segment_length=32, pixel_mul
         sub_img_lst = []
         for j in range(nh):
             for k in range(nw):
-                sub_img = tr_img_d1[j * segment_length:(j + 1) * segment_length, k * segment_length : (k + 1) * segment_length]
+                sub_img = tr_img_d1[j * segment_length: (j + 1) * segment_length, k * segment_length : (k + 1) * segment_length]
                 sub_img_lst.append(sub_img[extracted_pixels])  # 1d: num_extracted_pixels
 
         tr_inputs.append(torch.stack(sub_img_lst, dim=0))  # 2d: num_subimage * num_extracted_pixels
@@ -547,8 +550,25 @@ def _preprocess(model, x):
     return x
 
 
+def make_image_noise(indices_img, approach, img_noise_multiplier):
+    if approach == 'constant':
+        img_noise = img_noise_multiplier * torch.ones_like(indices_img)
+    elif approach == 'mirror_constant':
+        img_noise = img_noise_multiplier * torch.ones_like(indices_img)
+        img_noise[torch.arange(1, len(img_noise), 2)] = -1.0 * img_noise_multiplier
+    elif approach == 'gaussian':
+        img_noise = img_noise_multiplier * torch.randn_like(indices_img)
+    elif approach == 'mirror_gaussian':
+        img_noise = img_noise_multiplier * torch.randn_like(indices_img)
+        img_noise[torch.arange(1, len(img_noise), 2)] = - 1.0 * img_noise[torch.arange(0, len(img_noise), 2)]
+    else:
+        assert False, f'invalid image noise approach {approach}'
+    img_noise = None
+    return img_noise
+
+
 class ViTWrapper(nn.Module):
-    def __init__(self, model, num_classes=10, hidden_act=None, save_init_model=True):
+    def __init__(self, model, num_classes=10, hidden_act=None, save_init_model=True, is_splice=False):
         # TODO: use model.hidden_dim, model.patch_size, model.seq_length for more models
         super(ViTWrapper, self).__init__()
         self.arch = {'num_classes': num_classes, 'hidden_act': hidden_act}
@@ -566,12 +586,17 @@ class ViTWrapper(nn.Module):
             self.model0 = None
         self.model = model
 
-        self.indices_ft, self.indices_bkd, self.indices_img = None, None, None  # divide
+        self.is_splice = is_splice
+
+        self.indices_ft, self.indices_bkd, self.indices_img, self.indices_pos, self.indices_seq, self_indices_grp = None, None, None, None, None, None  # divide
         self.noise, self.num_active_bkd, self.pixel_dict, self.use_mirror = None, None, None, False  # reconstruction
         self.backdoor_ln_multiplier, self.conv_img_multiplier, self.backdoor_ft_bias = 1.0, 1.0, None
 
         self.logit_threshold, self.activation_threshold, self.activation_history, self.where_activation = None, None, [], 1  # registrar
         self.active_registrar, self.logit_history, self.logit_history_length, self.register_clock = False, [], 0, 0
+
+        self.weight_attribute_list = ['weight', 'weight0']
+        self.skip_attribute_list = ['indices_pos', 'indices_seq', 'is_splice', 'self_indices_grp']  # if in this list, the information dictionary can abandon to load these
 
     def forward(self, images):
         images = images.to(self.model.class_token.dtype)
@@ -628,14 +653,21 @@ class ViTWrapper(nn.Module):
             signals_activation = self.output_intermediate(images, to=self.where_activation)  # num_outliers, num_channels, num_features
             signals_bkd = signals_activation[:, :, self.indices_bkd]
 
-            indices_detailed = torch.nonzero(torch.gt(signals_bkd, self.activation_threshold))  # different parts of an image can activate two parts at the same time
-            # assert len(indices_detailed) >= len(idx_outlier), f'WRONG SETTING:{len(indices_detailed)}, {len(idx_outlier)}'
-            for idx_dt in indices_detailed:
-                self.activation_history.append({'image': images[idx_dt[0]], 'idx_channel': idx_dt[1], 'idx_backdoor': idx_dt[2],
-                                                'logit': logits[idx_dt[0]], 'activation': signals_bkd[idx_dt[0], idx_dt[1], idx_dt[2]], 'clock':self.register_clock})
+            if self.is_splice:
+                for i, image in enumerate(images):
+                    signal_this_bkd = signals_bkd[i]
+                    act_this_bkd = torch.gt(signal_this_bkd, self.activation_threshold)
+                    idx_this_bkd = torch.nonzero(act_this_bkd)
+                    self.activation_history.append({'image': image, 'logit': logits[i], 'clock': self.register_clock,
+                                                    'idx_channel': set(idx_this_bkd[:, 0].tolist()), 'idx_backdoor': set(idx_this_bkd[:, 1].tolist()), 'activation':signal_this_bkd})
+            else:
+                indices_detailed = torch.nonzero(torch.gt(signals_bkd, self.activation_threshold))  # different parts of an image can activate two parts at the same time
+                # assert len(indices_detailed) >= len(idx_outlier), f'WRONG SETTING:{len(indices_detailed)}, {len(idx_outlier)}'
+                for idx_dt in indices_detailed:
+                    self.activation_history.append({'image': images[idx_dt[0]], 'idx_channel': idx_dt[1], 'idx_backdoor': idx_dt[2],
+                                                    'logit': logits[idx_dt[0]], 'activation': signals_bkd[idx_dt[0], idx_dt[1], idx_dt[2]], 'clock':self.register_clock})
 
         self.register_clock += 1
-
 
     def module_parameters(self, module='encoder'):
         if module == 'encoder':
@@ -655,9 +687,14 @@ class ViTWrapper(nn.Module):
             'arch': self.arch,
             'model': self.model.state_dict(),
             'model0': self.model0.state_dict(),
+            'is_splice': self.is_splice,
+
             'indices_ft': self.indices_ft,
             'indices_bkd': self.indices_bkd,
             'indices_img': self.indices_img,
+            'indices_pos': self.indices_pos,
+            'indices_seq': self.indices_seq,
+            'indices_grp': self.indices_grp,
 
             'noise': self.noise,
             'num_active_bkd': self.num_active_bkd,
@@ -677,11 +714,19 @@ class ViTWrapper(nn.Module):
 
     def load_information(self, information_dict):
         for key in information_dict.keys():
-            if key not in ['model', 'model0', 'arch']:
-                setattr(self, key, information_dict[key])
-            elif key in ['model', 'model0']:
-                getattr(self, key).load_state_dict(information_dict[key])
+            value = information_dict[key]
+            if key == 'arch':
+                pass
+            elif key in self.skip_attribute_list:
+                if hasattr(self, key):
+                    setattr(self, key, value)
+                else:
+                    pass
+            elif key in self.weight_attribute_list:
+                getattr(self, key).load_state_dict(value)
                 print(f'load weight of {key}')
+            else:
+                setattr(self, key, value)
 
     def backdoor_initialize(self, dataloader4bait, args_weight, args_bait, args_registrar=None, num_backdoors=None,
                             is_double=False, is_slow_bait=False, logger=None, scheme=0):
@@ -700,11 +745,32 @@ class ViTWrapper(nn.Module):
         self.indices_img = indices_period_generator(768, head=64, start=hidden_group_dict['images'][0],
                                                     end=hidden_group_dict['images'][1])
 
+        if self.is_splice:
+            if 'sequence-key' in hidden_group_dict.keys() and hidden_group_dict['sequence-key'] is not None:
+                self.indices_seq = indices_period_generator(768, head=64, start=hidden_group_dict['sequence-key'][0],
+                                                            end=hidden_group_dict['sequence-key'][1])
+            else:
+                assert False, 'CANNOT reconstruct full images without sequence-specific key'
+
+            if 'position' in hidden_group_dict.keys() and hidden_group_dict['position'] is not None:
+                self.indices_pos = indices_period_generator(768, head=64, start=hidden_group_dict['position'][0],
+                                                            end=hidden_group_dict['position'][1])
+            else:
+                assert False, 'CANNOT reconstruct full images without position key'
+
+        if self.is_splice:
+            indices_img_plus = torch.cat([self.indices_img, self.indices_seq, self.indices_pos])
+            indices_img_plus, _ = torch.sort(indices_img_plus)
+        else:
+            indices_img_plus = self.indices_img
+
         self.num_active_bkd = num_backdoors
+        if self.is_splice:
+            self.indices_grp = [torch.arange(self.model.seq_length * j, self.model.seq_length * (j + 1)) for j in range(self.num_active_bkd)]
 
         self.model.class_token.data[:] = self.model.class_token.detach().clone()
         self.model.class_token.data[:, :, self.indices_bkd] = 0.
-        self.model.class_token.data[:, :, self.indices_img] = 0.
+        self.model.class_token.data[:, :, indices_img_plus] = 0.
 
         pixel_dict = args_weight['PIXEL']
         extracted_pixels = make_extract_pixels(**pixel_dict, resolution=self.model.patch_size)
@@ -716,13 +782,16 @@ class ViTWrapper(nn.Module):
                                                          multiplier=self.conv_img_multiplier, zero_mean=conv_dict['zero_mean'])
 
         self.use_mirror = conv_dict['use_mirror']
-        edit_conv(self.model.conv_proj, indices_img=self.indices_img, conv_pixel_extractor=conv_pixel_extractor,
+        edit_conv(self.model.conv_proj, indices_img=indices_img_plus, conv_pixel_extractor=conv_pixel_extractor,
                   indices_zero=self.indices_bkd, use_mirror=self.use_mirror)
+
+        edit_pos_embedding(self.model.encoder.pos_embedding)
 
         # major body: deal with layers
         indices_target_blks = [3, 4, 5, 6, 7, 8, 9, 10]
         indices_source_blks = [0, 1, 2, 3, 4, 5, 6, 7]
         layers = self.model.encoder.layers
+
         block_translate(layers, indices_target_blks=indices_target_blks, indices_source_blks=indices_source_blks)
 
         # deal_with_bait
@@ -736,19 +805,16 @@ class ViTWrapper(nn.Module):
             ft_noise = ft_noise_multiplier * torch.ones_like(self.indices_ft)
         else:
             ft_noise = None
-        if img_noise_approach == 'constant':
-            img_noise = img_noise_multiplier * torch.ones_like(self.indices_img)
-        elif img_noise_approach == 'mirror_constant':
-            img_noise = img_noise_multiplier * torch.ones_like(self.indices_img)
-            img_noise[torch.arange(1, len(img_noise), 2)] = -1.0 * img_noise_multiplier
-        elif img_noise_approach == 'gaussian':
-            img_noise = img_noise_multiplier * torch.randn_like(self.indices_img)
-        elif img_noise_approach == 'mirror_gaussian':
-            img_noise = img_noise_multiplier * torch.randn_like(self.indices_img)
-            img_noise[torch.arange(1, len(img_noise), 2)] = - 1.0 * img_noise[torch.arange(0, len(img_noise), 2)]
-        else:
-            assert False, f'invalid image noise approach {img_noise_approach}'
+
+        img_noise = make_image_noise(self.indices_img, approach=img_noise_approach, img_noise_multiplier=img_noise_multiplier)
         self.noise = img_noise
+        self.backdoor_ln_multiplier = backdoor_dict['ln_multiplier']
+
+        construct_dict = args_bait['CONSTRUCT']
+        selection_dict = args_bait['SELECTION']
+        bait = gaussian_seq_bait_generator(num_signals=len(self.indices_img), num_output=construct_dict['num_trials'],
+                                           multiplier=construct_dict['multiplier'], is_mirror_symmetry_bait=construct_dict['is_mirror'],
+                                           is_centralize_bait=construct_dict['is_centralize'])
 
         def input_backdoor_processing(tr_imgs, tr_labels):
             inputs, labels = get_output_conv((tr_imgs, tr_labels), extracted_pixels=extracted_pixels, segment_length=self.model.patch_size,
@@ -759,17 +825,10 @@ class ViTWrapper(nn.Module):
                                                 ln_multiplier=backdoor_dict['ln_multiplier'], noise=self.noise)
             return input2backdoor, labels
 
-        self.backdoor_ln_multiplier = backdoor_dict['ln_multiplier']
-
-        construct_dict = args_bait['CONSTRUCT']
-        selection_dict = args_bait['SELECTION']
-        bait = gaussian_seq_bait_generator(num_signals=len(self.indices_img), num_output=construct_dict['num_trials'],
-                                           multiplier=construct_dict['multiplier'], is_mirror_symmetry_bait=construct_dict['is_mirror'],
-                                           is_centralize_bait=construct_dict['is_centralize'])
         if is_slow_bait:
             possible_classes, quantity, willing_fishes = first_make_bait_information_slow(dataloader4bait=dataloader4bait, weights=bait,
-                                                                                    process_fn=input_backdoor_processing, topk=construct_dict['topk'],
-                                                                                    specific_subimage=construct_dict.get('subimage', None))
+                                                                                          process_fn=input_backdoor_processing, topk=construct_dict['topk'],
+                                                                                          specific_subimage=construct_dict.get('subimage', None))
         else:
             possible_classes, quantity, willing_fishes = first_make_bait_information_fast(dataloader4bait=dataloader4bait,
                                                                                           weights=bait, process_fn=input_backdoor_processing,
@@ -800,23 +859,23 @@ class ViTWrapper(nn.Module):
 
         if scheme == 0:
             canceller_dict = args_weight['CANCELLER']
-            edit_canceller(layers[1], indices_unrelated=torch.cat([self.indices_ft, self.indices_bkd]), indices_2zero=self.indices_img,
+            edit_canceller(layers[1], indices_unrelated=torch.cat([self.indices_ft, self.indices_bkd]), indices_2zero=indices_img_plus,
                            zoom_in=canceller_dict['zoom_in'], zoom_out=canceller_dict['zoom_out'], shift_constant=canceller_dict['shift_constant'],
                            ln_multiplier=canceller_dict['ln_multiplier'], inner_large_constant=True, large_constant=canceller_dict['large_constant'], )
 
             grad_filter_dict = args_weight['GRAD_FILTER']
-            edit_gradient_filter(layers[2], indices_hinder=self.indices_img, indices_absorbing=self.indices_ft,
+            edit_gradient_filter(layers[2], indices_hinder=indices_img_plus, indices_absorbing=self.indices_ft,
                                  indices_passing=self.indices_bkd, large_constant=grad_filter_dict['large_constant'],
                                  shift_constant=grad_filter_dict['shift_constant'], is_debug=False, close=grad_filter_dict['is_close'])
             logger.info('USE canceller & filter scheme')
         elif scheme == 1:
             amplifier_dict = args_weight['AMPLIFIER']
-            edit_amplifier(layers[1], indices_bkd=self.indices_bkd, indices_ft=self.indices_ft, indices_img=self.indices_img,
+            edit_amplifier(layers[1], indices_bkd=self.indices_bkd, indices_ft=self.indices_ft, indices_img=indices_img_plus,
                            signal_amplifier_in=amplifier_dict['signal_amplifier_in'], signal_amplifier_out=amplifier_dict['signal_amplifier_out'],
                            noise_thres=amplifier_dict['noise_thres'], large_constant=amplifier_dict['large_constant'])
 
             canceller_dict = args_weight['CANCELLER']
-            edit_canceller(layers[2], indices_unrelated=torch.cat([self.indices_ft, self.indices_bkd]), indices_2zero=self.indices_img,
+            edit_canceller(layers[2], indices_unrelated=torch.cat([self.indices_ft, self.indices_bkd]), indices_2zero=indices_img_plus,
                            zoom_in=canceller_dict['zoom_in'], zoom_out=canceller_dict['zoom_out'], shift_constant=canceller_dict['shift_constant'],
                            ln_multiplier=canceller_dict['ln_multiplier'], inner_large_constant=True, large_constant=canceller_dict['large_constant'])
             logger.info('USE amplifier & canceller scheme')
@@ -827,17 +886,17 @@ class ViTWrapper(nn.Module):
 
         # edit passing layers
         for idx in indices_target_blks:
-            edit_direct_passing(layers[idx], indices_zero=torch.cat([self.indices_img, self.indices_bkd]))
+            edit_direct_passing(layers[idx], indices_zero=torch.cat([indices_img_plus, self.indices_bkd]))
 
         # edit endding layers
         ending_dict = args_weight['ENDING']
-        layers[-2].mlp[3].bias.data[self.indices_img] += ending_dict['large_constant'] # the only large constant used by last block and last layer normalization
-        edit_last_block(layers[11], indices_ft=self.indices_ft, indices_bkd=self.indices_bkd, indices_img=self.indices_img,
+        layers[-2].mlp[3].bias.data[indices_img_plus] += ending_dict['large_constant'] # the only large constant used by last block and last layer normalization
+        edit_last_block(layers[11], indices_ft=self.indices_ft, indices_bkd=self.indices_bkd, indices_img=indices_img_plus,
                         large_constant=ending_dict['large_constant'], signal_amplifier_in=ending_dict.get('signal_amplifier_in', None),
                         signal_amplifier_out=ending_dict.get('signal_amplifier_out', None), noise_thres=ending_dict['noise_thres'])
 
         edit_terminalLN(self.model.encoder.ln, indices_ft=self.indices_ft, indices_bkd=self.indices_bkd,
-                        indices_img=self.indices_img, large_constant=ending_dict['large_constant'], multiplier_ft=ending_dict['ln_multiplier_ft'],
+                        indices_img=indices_img_plus, large_constant=ending_dict['large_constant'], multiplier_ft=ending_dict['ln_multiplier_ft'],
                         multiplier_bkd=ending_dict['ln_multiplier_bkd'])
 
         # edit head
@@ -912,42 +971,71 @@ class ViTWrapper(nn.Module):
     def reconstruct_images(self, backdoorblock=0, only_active=True, all_precision=True):
         h = (self.pixel_dict['xend'] - self.pixel_dict['xstart']) // self.pixel_dict['xstep']
         w = (self.pixel_dict['yend'] - self.pixel_dict['ystart']) // self.pixel_dict['ystep']
-
-        bkd_weight_new = self.model.encoder.layers[backdoorblock].mlp[0].weight[self.indices_bkd].detach()
-        bkd_weight_old = self.model0.encoder.layers[backdoorblock].mlp[0].weight[self.indices_bkd].detach()
-
-        bkd_bias_new = self.model.encoder.layers[backdoorblock].mlp[0].bias[self.indices_bkd].detach()
-        bkd_bias_old = self.model0.encoder.layers[backdoorblock].mlp[0].bias[self.indices_bkd].detach()
-
-        bkd_ft_new = self.model.encoder.layers[backdoorblock].mlp[0].weight[self.indices_bkd, self.indices_ft[0]].detach()
-        bkd_ft_old = self.model0.encoder.layers[backdoorblock].mlp[0].weight[self.indices_bkd, self.indices_ft[0]].detach()
-
-        delta_weight = bkd_weight_new - bkd_weight_old
-        delta_bias = bkd_bias_new - bkd_bias_old
-        delta_ft = bkd_ft_new - bkd_ft_old
-
         img_lst = []
-
         num_reconstruct = self.num_active_bkd if only_active else len(self.indices_bkd)
 
-        for j in range(num_reconstruct):
-            if self.use_mirror:
-                delta_wt = delta_weight[j, self.indices_img[torch.arange(0, len(self.indices_img), 2)]]
-            else:
-                delta_wt = delta_weight[j, self.indices_img]
+        if self.is_splice:
+            nh, nw = self.model.image_size // self.model.patch_size, self.model.image_size // self.model.patch_size
 
-            if all_precision:
-                delta_bs = delta_ft[j] / self.backdoor_ft_bias
-            else:
-                delta_bs = delta_bias[j]
+            bkd_weight_new = [self.model.encoder.layers[backdoorblock].mlp[0].weight[this_group, self.indices_img].detach() for this_group in self.indices_grp]
+            bkd_weight_old = [self.model0.encoder.layers[backdoorblock].mlp[0].weight[this_group, self.indices_img].detach() for this_group in self.indices_grp]
 
-            if delta_bs.norm() < 1e-10:  # consider the situation that the delta bias smaller than
-                img = torch.zeros(h, w)
-            else:
-                img_dirty = delta_wt / delta_bs
-                img_clean = (img_dirty - self.noise) / (self.conv_img_multiplier * self.backdoor_ln_multiplier)
-                img = img_clean.reshape(h, w)
-            img_lst.append(img)
+            bkd_bias_new = [self.model.encoder.layers[backdoorblock].mlp[0].bias[this_group].detach() for this_group in self.indices_grp]
+            bkd_bias_old = [self.model0.encoder.layers[backdoorblock].mlp[0].bias[this_group].detach() for this_group in self.indices_grp]
+
+            bkd_ft_new = [self.model.encoder.layers[backdoorblock].mlp[0].weight[this_group, self.indices_ft[0]].detach() for this_group in self.indices_grp]
+            bkd_ft_old = [self.model0.encoder.layers[backdoorblock].mlp[0].weight[this_group, self.indices_ft[0]].detach() for this_group in self.indices_grp]
+
+            for j in range(num_reconstruct):
+                img = torch.zeros(nh * h, nw * w)
+
+                delta_weight_redund = bkd_weight_new[j] - bkd_weight_old[j]  # sequence length * number of pixels
+                delta_bias_redund = bkd_bias_new[j] - bkd_bias_old[j]  # sequence length
+                delta_ft_redund = bkd_ft_new[j] - bkd_ft_old[j]  # sequence length
+
+                delta_weight = delta_weight_redund[1:]  # number of patches * number of pixels
+                delta_bias = delta_bias_redund[1:]  # number of patches
+                delta_ft = delta_ft_redund[1:]  # number of patches
+
+                delta_bs = delta_ft / self.backdoor_ft_bias if all_precision else delta_bias
+                is_activated = torch.gt(torch.abs(delta_bs), 1e-10)
+
+                img_clean = torch.zeros_like(delta_bs)
+                img_dirty_activated = delta_weight[is_activated] / delta_bs[is_activated]  # activated sequence length * number of pixels
+                img_clean[is_activated] = (img_dirty_activated - self.noise.unsqueeze(dim=0)) / (self.conv_img_multiplier * self.backdoor_ln_multiplier)
+                img_patches = img_clean.reshape(-1, h, w)
+
+                for k in range(len(img_patches)):
+                    ih, iw = k // nw, k % nw
+                    img[ih, iw] = img_patches[k]
+
+                img_lst.append(img)
+
+        else:
+            bkd_weight_new = self.model.encoder.layers[backdoorblock].mlp[0].weight[self.indices_bkd].detach()
+            bkd_weight_old = self.model0.encoder.layers[backdoorblock].mlp[0].weight[self.indices_bkd].detach()
+
+            bkd_bias_new = self.model.encoder.layers[backdoorblock].mlp[0].bias[self.indices_bkd].detach()
+            bkd_bias_old = self.model0.encoder.layers[backdoorblock].mlp[0].bias[self.indices_bkd].detach()
+
+            bkd_ft_new = self.model.encoder.layers[backdoorblock].mlp[0].weight[self.indices_bkd, self.indices_ft[0]].detach()
+            bkd_ft_old = self.model0.encoder.layers[backdoorblock].mlp[0].weight[self.indices_bkd, self.indices_ft[0]].detach()
+
+            delta_weight = bkd_weight_new - bkd_weight_old
+            delta_bias = bkd_bias_new - bkd_bias_old
+            delta_ft = bkd_ft_new - bkd_ft_old
+
+            for j in range(num_reconstruct):
+                delta_wt = delta_weight[j, self.indices_img[torch.arange(0, len(self.indices_img), 2)]] if self.use_mirror else delta_weight[j, self.indices_img]
+                delta_bs = delta_ft[j] / self.backdoor_ft_bias if all_precision else delta_bias[j]
+
+                if delta_bs.norm() < 1e-10:  # consider the situation that the delta bias smaller than
+                    img = torch.zeros(h, w)
+                else:
+                    img_dirty = delta_wt / delta_bs
+                    img_clean = (img_dirty - self.noise) / (self.conv_img_multiplier * self.backdoor_ln_multiplier)
+                    img = img_clean.reshape(h, w)
+                    img_lst.append(img)
 
         return img_lst
 
@@ -962,21 +1050,25 @@ class ViTWrapper(nn.Module):
 
         possible_images_by_backdoors = [[] for j in range(self.num_active_bkd)]
         for item in self.activation_history:
-            subimage_2d = cut_subimage(item['image'], idx_subimage=(item['idx_channel']-1),
+            if self.is_splice:
+                image = item['image']
+                for idb in item['idx_backdoor']:
+                    possible_images_by_backdoors[idb].append({'image': image, 'logit': item['logit'], 'clock': item['clock']})
+
+            else:
+                subimage_2d = cut_subimage(item['image'], idx_subimage=(item['idx_channel']-1),
                                        subimage_resolution=self.model.patch_size, extracted_pixels=extracted_pixels)
-            subimage_3d = subimage_2d.reshape(3, h, w)
-            possible_images_by_backdoors[item['idx_backdoor']].append({'subimage': subimage_3d, 'logit': item['logit'],
-                                                                       'activation': item['activation'], 'clock':item['clock'],
-                                                                       'idx_channel': item['idx_channel']})
+                image = subimage_2d.reshape(3, h, w)
+                possible_images_by_backdoors[item['idx_backdoor']].append({'image': image, 'logit': item['logit'], 'activation': item['activation'], 'clock':item['clock']})
 
         real_images_lst = []
         if approach == 'all':
             for j in range(self.num_active_bkd):
                 info_this_bkd = possible_images_by_backdoors[j]
                 for item_this_bkd in info_this_bkd:
-                    real_images_lst.append(item_this_bkd['subimage'])
+                    real_images_lst.append(item_this_bkd['image'])
 
-        elif approach == 'strong_logit' or approach == 'strong_activation':
+        elif (approach == 'strong_logit' or approach == 'strong_activation') and not self.is_splice:
             for j in range(self.num_active_bkd):
                 info_this_bkd = possible_images_by_backdoors[j]
                 if len(info_this_bkd) > 0:
@@ -987,11 +1079,11 @@ class ViTWrapper(nn.Module):
                         sort_key = lambda x: x[item_key]
 
                     max_item = max(info_this_bkd, key=sort_key)
-                    real_images_lst.append(max_item['subimage'])
+                    real_images_lst.append(max_item['image'])
                 else:
                     real_images_lst.append(torch.zeros(3, h, w))
 
-        elif approach == 'activation_threshold':
+        elif approach == 'activation_threshold' and not self.is_splice:
             for j in range(self.num_active_bkd):
                 info_this_bkd = possible_images_by_backdoors[j]
                 valid_info_this_bkd = [item for item in info_this_bkd if item['activation'] > threshold]
@@ -1000,7 +1092,7 @@ class ViTWrapper(nn.Module):
                 elif len(valid_info_this_bkd) > 1:
                     real_images_lst.append(torch.zeros(3, h, w))
                 else:
-                    real_images_lst.append(valid_info_this_bkd[0]['subimage'])
+                    real_images_lst.append(valid_info_this_bkd[0]['image'])
 
         elif approach == 'intelligent':
             for j in range(self.num_active_bkd):
@@ -1012,11 +1104,10 @@ class ViTWrapper(nn.Module):
                     if item_1st['clock'] == item_2nd['clock']:
                         img = torch.zeros(3, h, w)
                     else:
-                        img = item_1st['subimage']
+                        img = item_1st['image']
                     real_images_lst.append(img)
                 else:
-                    real_images_lst.append(info_this_bkd[0]['subimage'])
-
+                    real_images_lst.append(info_this_bkd[0]['image'])
 
         return real_images_lst, possible_images_by_backdoors
 

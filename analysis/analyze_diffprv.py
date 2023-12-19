@@ -45,8 +45,8 @@ def plot_activation_hist(grad_act, grad_inact, save_path=None, side='right', bin
     n, bins, _ = plt.hist([grad_inact.tolist(), grad_act.tolist()], align='mid', rwidth=1.0, alpha=1.0, histtype='barstacked', bins=bins,
                           label=['disappear','appear'], color=['blue', 'orange'])
     # plt.xticks(bins)
-    print(bins)
-    print(grad_act.tolist())
+    # print(bins)
+    print(f'gradient list at activation: {grad_act.tolist()}')
 
     plt.yscale('log')
     plt.title(None)

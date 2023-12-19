@@ -31,9 +31,9 @@ def build_vision_transformer(info_dataset, info_model, info_train, logger=None, 
     classes = info_model.get('CLASSES', dataset_classes)
 
     if info_model['USE_BACKDOOR_INITIALIZATION']:
-        classifier = ViTWrapper(model0, num_classes=classes, hidden_act=info_model['ARCH']['hidden_act'], save_init_model=True)
+        classifier = ViTWrapper(model0, num_classes=classes, hidden_act=info_model['ARCH']['hidden_act'], save_init_model=True, is_splice=info_model.get('IS_SPLICE', False))
     else:
-        classifier = ViTWrapper(model0, num_classes=classes, hidden_act=info_model['ARCH']['hidden_act'], save_init_model=False)
+        classifier = ViTWrapper(model0, num_classes=classes, hidden_act=info_model['ARCH']['hidden_act'], save_init_model=False, is_splice=info_model.get('IS_SPLICE', False))
 
     if info_model['USE_BACKDOOR_INITIALIZATION']:
         args_weights = info_model['WEIGHT_SETTING']
