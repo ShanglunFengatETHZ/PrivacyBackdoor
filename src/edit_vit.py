@@ -114,8 +114,19 @@ def edit_conv(module, indices_img, conv_pixel_extractor, indices_zero=None, use_
         assert num_entries == num_pixels, f'{num_entries}, {num_pixels}'
         module.weight.data[indices_img] = conv_pixel_extractor
 
-def edit_pos_embedding(position_embedding):
-    pass
+
+def edit_pos_embedding(pos_embedding, indices_zero,
+                       add_pos_basis=False, indices_pos=None, pos_basis=None,
+                       add_stabilizer_constant=False, large_constant=0.0, indices_stab=None):
+    pos_embedding.data = None
+    pos_embedding.data[:, :, indices_zero] = 0.0
+
+    if add_pos_basis:
+        for j in pos_embedding.shape[1]:
+            pos_embedding.data[0, j, indices_pos] = pos_basis[j]
+
+    if add_stabilizer_constant:
+        pos_embedding.data[:, :, indices_stab] += large_constant
 
 
 def get_output_conv(inputs2model, extracted_pixels, segment_length=32, pixel_multiplier=1.0,
@@ -350,14 +361,14 @@ def get_backdoor_threshold(upperlowerbound, neighbor_balance=(0.2, 0.8), is_rand
 
 
 def edit_backdoor_block(module, indices_ft, indices_bkd, indices_image, zeta, weight_bait, bias_bait,
-                        large_constant=0.0, inner_large_constant=False, img_noise=None, ft_noise=None, ln_multiplier=1.0):
+                        large_constant=0.0, add_stabilizer_constant=False, offset_stabilizer_constant=False, img_noise=None, ft_noise=None, ln_multiplier=1.0):
     m = len(indices_bkd) + len(indices_ft) + len(indices_image)
     m_u = len(indices_bkd) + len(indices_ft)
     assert m == len(module.ln_1.weight)
     sigma, b_u, b_v = cal_stat_wrtC(m, m_u, large_constant)
 
     close_attention(module)
-    if inner_large_constant:
+    if add_stabilizer_constant:
         module.self_attention.out_proj.bias.data[indices_image] = large_constant
 
     close_mlp(module)
@@ -374,7 +385,7 @@ def edit_backdoor_block(module, indices_ft, indices_bkd, indices_image, zeta, we
         module.mlp[0].bias.data[idx] = bias_bait[j]
 
     module.mlp[3].weight.data[indices_bkd, indices_bkd] = zeta
-    if inner_large_constant:
+    if offset_stabilizer_constant:
         module.mlp[3].bias.data[indices_image] = -1.0 * large_constant
 
 
@@ -565,6 +576,44 @@ def make_image_noise(indices_img, approach, img_noise_multiplier):
         assert False, f'invalid image noise approach {approach}'
     img_noise = None
     return img_noise
+
+
+def pos_embedding_creator(num_position, num_entries, use_class_token=False, approach='random_sphere',
+                          embedding_multiplier=1.0, bait_multiplier=1.0, lower_cos_bound=None, upper_cos_bound=None,
+                          num_trial=None, threshold_approach='native', threshold_coefficient=1.0):
+
+    if approach == 'random_sphere':
+        candidates = torch.zeros(1, num_entries)
+        if num_trial is None:
+            num_trial = num_position
+        meta = torch.randn(num_trial, num_entries)
+        meta = meta - meta.mean(dim=-1, keepdim=True)
+        meta = meta / meta.norm(dim=-1, keepdim=True)
+
+        for j in range(len(meta)):
+            x = meta[j].unsqeeuze(dim=0)
+            is_upper_bounded = torch.max(candidates @ x.t()) < upper_cos_bound if upper_cos_bound is not None else True
+            is_lower_bounded = torch.min(candidates @ x.t()) > lower_cos_bound if lower_cos_bound is not None else True
+            if is_upper_bounded and is_lower_bounded:
+                candidates = torch.cat(candidates, x)
+
+        assert len(candidates) < num_position + 1, 'there are not enough candidate'
+
+        final_candidates = candidates[:num_position] if use_class_token else candidates[1:(num_position+1)]
+
+        embedding = embedding_multiplier * final_candidates
+        bait = bait_multiplier * final_candidates
+        inprd = embedding @ bait
+        values, indices = inprd.topk(2, dim=-1)
+        thres_upper, thres_lower = values[:, 0], values[:, 1]
+
+    if threshold_approach == 'native':
+        threshold = threshold_coefficient * thres_upper
+
+    if use_class_token:
+        threshold[0] = 1e4
+
+    return embedding, bait, (threshold, thres_upper, thres_lower)
 
 
 class ViTWrapper(nn.Module):
@@ -785,7 +834,23 @@ class ViTWrapper(nn.Module):
         edit_conv(self.model.conv_proj, indices_img=indices_img_plus, conv_pixel_extractor=conv_pixel_extractor,
                   indices_zero=self.indices_bkd, use_mirror=self.use_mirror)
 
-        edit_pos_embedding(self.model.encoder.pos_embedding)
+        if self.is_splice:
+            pos_dict = args_weight['POS_EMBEDDING']
+            pos_embedding, pos_bait, pos_thres_quantities = pos_embedding_creator(num_position=self.model.seq_length, num_entries=len(self.indices_pos),
+                                                                                  use_class_token=True,  approach='random_sphere',
+                                                                                  embedding_multiplier=pos_dict['embedding_multiplier'], bait_multiplier=pos_dict['bait_multiplier'],
+                                                                                  lower_cos_bound=pos_dict.get('lower_cosine_bound',None), upper_cos_bound=pos_dict.get('upper_cosine_bound', None), num_trial=pos_dict.get('num_trial', None),
+                                                                                  threshold_approach=pos_dict.get('threshold_approach', 'native'), threshold_coefficient=pos_dict.get('threshold_coefficient',1.0))
+            pos_threshold, pos_upper, pos_lower = pos_thres_quantities
+            logger.info(f'position threshold: {[round(x,2) for x in pos_threshold.tolist()]}')
+            logger.info(f'position upper threshold: {[round(x,2) for x in pos_upper.tolist()]}')
+            logger.info(f'position lower threshold: {[round(x,2) for x in pos_lower.tolist()]}')
+
+            edit_pos_embedding(self.model.encoder.pos_embedding, indices_zero=torch.cat([self.indices_bkd, indices_img_plus]),
+                               add_pos_basis=True, indices_pos=self.indices_pos, pos_basis=pos_embedding,
+                               add_stabilizer_constant=True, large_constant=pos_dict['large_constant'], indices_stab=indices_img_plus)
+        else:
+            edit_pos_embedding(self.model.encoder.pos_embedding, indices_zero=torch.cat([self.indices_bkd, indices_img_plus]))
 
         # major body: deal with layers
         indices_target_blks = [3, 4, 5, 6, 7, 8, 9, 10]
@@ -851,10 +916,16 @@ class ViTWrapper(nn.Module):
             logger.info(f'upper bound - threshold:{quantity[1] - threshold}')
             logger.info(f'maximum - threshold:{quantity[2] - threshold}')
 
+        # TODO: change parameters, this is only for not splicing
+        if self.is_splice:
+            assert backdoor_dict['large_constant'] == pos_dict['large_constant'], 'the two large stabilizer constant has to be the same'
+        else:
+            pass
+
         edit_backdoor_block(layers[0], indices_ft=self.indices_ft, indices_bkd=self.indices_bkd,
                             indices_image=self.indices_img,  zeta=backdoor_dict['zeta_multiplier'], weight_bait=bait,
                             bias_bait=-1.0 * threshold, large_constant=backdoor_dict['large_constant'],
-                            inner_large_constant=True, img_noise=self.noise, ft_noise=ft_noise,
+                            add_stabilizer_constant=True, offset_stabilizer_constant=True, img_noise=self.noise, ft_noise=ft_noise,
                             ln_multiplier=self.backdoor_ln_multiplier)
 
         if scheme == 0:
@@ -956,6 +1027,7 @@ class ViTWrapper(nn.Module):
         self.model.conv_proj.bias.data[indices_zero] = 0.0
 
         layers = self.model.encoder.layers
+        edit_pos_embedding(self.model.encoder.pos_embedding, indices_zero=indices_zero)
         block_end = block_dict['block_end']
         for j in range(block_end):
             edit_direct_passing(layers[j], indices_zero=indices_zero)
