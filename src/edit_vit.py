@@ -179,6 +179,29 @@ def get_input2backdoor(inputs, input_mirror=False, is_centralize=True, ln_multip
     return outputs
 
 
+def get_sequencekey2backdoor(inputs, seq_length=50, key_length=0, compound_multiplier=1.0, noise=None,
+                             is_centralize=True, mirror=False):
+    assert inputs.dim() == 3, f'{inputs.dim()}'
+    assert inputs.shape[2] == len(noise), f'sequence key and noise do NOT match: {inputs.shape[2]}, {len(noise)}'
+    img_avg_cross_patch = inputs.mean(dim=1)  # num_sample * num_pixel
+
+    sequence_keys_unscaled = torch.zeros(len(img_avg_cross_patch), key_length)
+
+    repeat = img_avg_cross_patch.shape[1] // key_length
+
+    if mirror:
+        for j in range(key_length // 2):
+            sequence_keys_unscaled[:, 2 * j] = img_avg_cross_patch[:, 2 * repeat * j: 2 * repeat * (j + 1)] .sum(dim=-1)
+            sequence_keys_unscaled[:, 2 * j + 1] = - 1.0 * img_avg_cross_patch[:, 2 * repeat * j: 2 * repeat * (j + 1)].sum(dim=-1)
+    else:
+        for j in range(key_length):
+            sequence_keys_unscaled[:, j] = img_avg_cross_patch[:, repeat * j: repeat * (j + 1)].sum(dim=-1)
+
+    sequence_keys_scaled = (seq_length - 1) / seq_length * sequence_keys_unscaled * compound_multiplier
+    sequence_keys = sequence_keys_scaled - sequence_keys_scaled.mean(dim=-1, keepdim=True)
+    return sequence_keys
+
+
 def gaussian_seq_bait_generator(num_signals=256, num_output=500,  multiplier=1.0, is_mirror_symmetry_bait=False,
                                 is_centralize_bait=True):
     weights = torch.zeros(num_output, num_signals)
@@ -261,7 +284,7 @@ def first_make_bait_information_fast(dataloader4bait, weights, process_fn, topk=
             classes = labels
         signal_lst.append(signals)
         classes_lst.append(classes)
-    signals_all, classes_all = torch.cat(signal_lst),torch.cat(classes_lst)
+    signals_all, classes_all = torch.cat(signal_lst), torch.cat(classes_lst)
     del signal_lst
     del classes_lst
 
@@ -278,6 +301,30 @@ def first_make_bait_information_fast(dataloader4bait, weights, process_fn, topk=
                 willing_fishes_this_bait.append((idx_subimages[k].item() // num_subimage_per_image, idx_subimages[k].item() % num_subimage_per_image))
             else:
                 willing_fishes_this_bait.append((idx_subimages[k].item(), specific_subimage))
+        willing_fishes.append(willing_fishes_this_bait)
+
+    return possible_classes, (values[-1, :], values[-2, :], values[0, :]), willing_fishes
+
+
+def first_make_sequence_key_information(dataloader4bait, baits, process_fn, topk=5):
+    willing_fishes, signal_lst, classes_lst = [], [], []
+    num_baits = len(baits)
+    for X, y in dataloader4bait:
+        inputs, labels = process_fn(X, y)
+        signal_lst.append(inputs)
+        classes_lst.append(labels)
+    signals_all, classes_all = torch.cat(signal_lst), torch.cat(classes_lst)
+    del signal_lst
+    del classes_lst
+
+    z = signals_all @ baits.t()  # num_samples * num_baits
+    del signals_all
+
+    values, indices = z.topk(topk + 1, dim=0)  # topk * num_output
+    possible_classes = [set(classes_all[indices[:-1, j]].tolist()) for j in range(num_baits)]
+    for j in range(num_baits):
+        idx_sample = indices[:-1, j]
+        willing_fishes_this_bait = idx_sample.tolist()
         willing_fishes.append(willing_fishes_this_bait)
 
     return possible_classes, (values[-1, :], values[-2, :], values[0, :]), willing_fishes
@@ -919,7 +966,13 @@ class ViTWrapper(nn.Module):
 
         construct_dict = args_bait['CONSTRUCT']
         selection_dict = args_bait['SELECTION']
-        bait = gaussian_seq_bait_generator(num_signals=len(self.indices_img), num_output=construct_dict['num_trials'],
+
+        if self.is_splice:
+            num_signals = len(self.indices_seq)
+        else:
+            num_signals = len(self.indices_img)
+
+        bait = gaussian_seq_bait_generator(num_signals=num_signals, num_output=construct_dict['num_trials'],
                                            multiplier=construct_dict['multiplier'], is_mirror_symmetry_bait=construct_dict['is_mirror'],
                                            is_centralize_bait=construct_dict['is_centralize'])
 
