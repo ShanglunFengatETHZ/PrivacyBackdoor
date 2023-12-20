@@ -360,14 +360,56 @@ def get_backdoor_threshold(upperlowerbound, neighbor_balance=(0.2, 0.8), is_rand
     return threshold
 
 
+def sequence_key_creator(module, indices_seq, indices_img, approach='native', value_multiplier=1.0, output_multiplier=1.0,
+                         indices_left=None, indices_right=None, stabilizer_constant=1e4, ln1_multiplier=1.0):
+
+    m = len(indices_left) + len(indices_right)
+    m_u = len(indices_left)
+
+    sigma, b_u, b_v = cal_stat_wrtC(m, m_u, stabilizer_constant)
+    assign_ln(module.ln_1, torch.arange(m), weight=0., bias=0.)
+
+    indices_set_right = set(indices_right.tolist())
+    assert set(indices_img.tolist()).issubset(indices_set_right) and set(indices_seq.tolist()).issubset(indices_set_right), 'image and sequence has to be in the right partition'
+    assign_ln(module.ln_1, indices_img, weight=ln1_multiplier * sigma, bias=ln1_multiplier * b_v)
+
+    # set key, query matrix
+    module.in_proj_weight.data[0: 2 * m, :] = 0.
+    module.in_proj_bias.data[:] = 0.
+
+    # set value matrix
+    mask_value = torch.zeros(m, m)
+    mask_value[indices_img, indices_img] = value_multiplier
+    module.in_proj_weight.data[2 * m: 3 * m, :] = mask_value * value_multiplier
+
+    # set out matrix
+    mask_out = torch.zeros(m, m)
+    assert len(indices_img) % len(indices_seq) == 0, f'WE ONLY consider the situation that there are more pixels than keys'
+    mkeys = len(indices_img)
+    repeat = len(indices_img) // mkeys
+    if approach == 'native':
+        for i, id_key in enumerate(indices_seq):
+            mask_out[id_key, indices_img[i * repeat : (i+1) * repeat]] = output_multiplier
+    elif approach == 'mirror':
+        for i in range(len(indices_seq) // 2):
+            idx_img_this_pair = indices_img[i * 2 * repeat: (i + 1) * 2 * repeat]
+            mask_out[indices_seq[2 * i], idx_img_this_pair] = output_multiplier
+            mask_out[indices_seq[2 * i + 1], idx_img_this_pair] = -1.0 * output_multiplier
+    else:
+        assert False, 'NOT implemented'
+
+    module.out_proj.weight.data[:] = mask_out * output_multiplier
+    module.out_proj.bias.data[:] = 0.
+
+
 def edit_backdoor_block(module, indices_ft, indices_bkd, indices_image, zeta, weight_bait, bias_bait,
-                        large_constant=0.0, add_stabilizer_constant=False, offset_stabilizer_constant=False, img_noise=None, ft_noise=None, ln_multiplier=1.0):
+                        large_constant=0.0, add_stabilizer_constant=False, offset_stabilizer_constant=False,
+                        img_noise=None, ft_noise=None, ln_multiplier=1.0):
     m = len(indices_bkd) + len(indices_ft) + len(indices_image)
     m_u = len(indices_bkd) + len(indices_ft)
     assert m == len(module.ln_1.weight)
     sigma, b_u, b_v = cal_stat_wrtC(m, m_u, large_constant)
 
-    close_attention(module)
     if add_stabilizer_constant:
         module.self_attention.out_proj.bias.data[indices_image] = large_constant
 
@@ -882,9 +924,10 @@ class ViTWrapper(nn.Module):
                                            is_centralize_bait=construct_dict['is_centralize'])
 
         def input_backdoor_processing(tr_imgs, tr_labels):
-            inputs, labels = get_output_conv((tr_imgs, tr_labels), extracted_pixels=extracted_pixels, segment_length=self.model.patch_size,
-                                             pixel_multiplier=self.conv_img_multiplier, channel_extract_approach=conv_dict['extract_approach'],
-                                             output_mirror=self.use_mirror, is_centralize=conv_dict['zero_mean'])
+            inputs, labels = get_output_conv((tr_imgs, tr_labels), extracted_pixels=extracted_pixels,
+                                             segment_length=self.model.patch_size, pixel_multiplier=self.conv_img_multiplier,
+                                             channel_extract_approach=conv_dict['extract_approach'], output_mirror=self.use_mirror,
+                                             is_centralize=conv_dict['zero_mean'])
 
             input2backdoor = get_input2backdoor(inputs, input_mirror=self.use_mirror, is_centralize=True,
                                                 ln_multiplier=backdoor_dict['ln_multiplier'], noise=self.noise)
@@ -922,6 +965,7 @@ class ViTWrapper(nn.Module):
         else:
             pass
 
+        close_attention(layers[0])
         edit_backdoor_block(layers[0], indices_ft=self.indices_ft, indices_bkd=self.indices_bkd,
                             indices_image=self.indices_img,  zeta=backdoor_dict['zeta_multiplier'], weight_bait=bait,
                             bias_bait=-1.0 * threshold, large_constant=backdoor_dict['large_constant'],
