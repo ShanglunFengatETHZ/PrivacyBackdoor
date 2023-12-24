@@ -704,7 +704,7 @@ def make_image_noise(indices_img, approach, img_noise_multiplier):
         img_noise[torch.arange(1, len(img_noise), 2)] = - 1.0 * img_noise[torch.arange(0, len(img_noise), 2)]
     else:
         assert False, f'invalid image noise approach {approach}'
-    img_noise = None
+    # img_noise = None
     return img_noise
 
 
@@ -968,7 +968,7 @@ class ViTWrapper(nn.Module):
 
         self.use_mirror = conv_dict.get('use_mirror', False)
         edit_conv(self.model.conv_proj, indices_img=self.indices_img, conv_pixel_extractor=conv_pixel_extractor,
-                  indices_zero=torch.cat([self.indices_bkd, self.indices_seq, self.indices_pos]), use_mirror=self.use_mirror)
+                  indices_zero=torch.cat([self.indices_bkd, indices_img_plus]), use_mirror=self.use_mirror)
 
         ### INTO ENCODER
         # major body: deal with layers
