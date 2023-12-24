@@ -197,10 +197,12 @@ def get_sequencekey2backdoor(inputs, seq_length=50, key_length=0, compound_multi
         for j in range(key_length):
             sequence_keys_unscaled[:, j] = img_avg_cross_patch[:, repeat * j: repeat * (j + 1)].sum(dim=-1)
 
-    sequence_keys_scaled = (seq_length - 1) / seq_length * sequence_keys_unscaled * compound_multiplier
+    sequence_keys_scaled = ((seq_length - 1) / seq_length) * sequence_keys_unscaled * compound_multiplier
 
     if is_centralize:
         sequence_keys = sequence_keys_scaled - sequence_keys_scaled.mean(dim=-1, keepdim=True)
+    else:
+        sequence_keys = sequence_keys_scaled
     return sequence_keys
 
 
@@ -270,7 +272,7 @@ def first_make_bait_information_slow(dataloader4bait, weights, process_fn, topk=
     return possible_classes, quantities, willing_fishes
 
 
-def first_make_bait_information_fast(dataloader4bait, weights, process_fn, topk=5, specific_subimage=None):
+def first_make_bait_information_fast(dataloader4bait, weights, process_fn, topk=5, specific_subimage=None, logger=None):
     num_output = len(weights)
     willing_fishes, signal_lst, classes_lst = [], [], []
     for X, y in dataloader4bait:
@@ -289,6 +291,8 @@ def first_make_bait_information_fast(dataloader4bait, weights, process_fn, topk=
     signals_all, classes_all = torch.cat(signal_lst), torch.cat(classes_lst)
     del signal_lst
     del classes_lst
+    if logger is not None:
+        logger.info(f'[SEQUENCE KEY] MAX:{signals_all.max()}, MIN:{signals_all.min()}')
 
     z = signals_all @ weights.t()
     del signals_all
@@ -308,7 +312,7 @@ def first_make_bait_information_fast(dataloader4bait, weights, process_fn, topk=
     return possible_classes, (values[-1, :], values[-2, :], values[0, :]), willing_fishes
 
 
-def first_make_sequence_key_information(dataloader4bait, baits, process_fn, topk=5):
+def first_make_sequence_key_information(dataloader4bait, baits, process_fn, topk=5, logger=None):
     willing_fishes, signal_lst, classes_lst = [], [], []
     num_baits = len(baits)
     for X, y in dataloader4bait:
@@ -318,6 +322,9 @@ def first_make_sequence_key_information(dataloader4bait, baits, process_fn, topk
     signals_all, classes_all = torch.cat(signal_lst), torch.cat(classes_lst)
     del signal_lst
     del classes_lst
+
+    if logger is not None:
+        logger.info(f'[SEQUENCE KEY] MAX:{signals_all.max()}, MIN:{signals_all.min()}')
 
     z = signals_all @ baits.t()  # num_samples * num_baits
     del signals_all
@@ -424,13 +431,13 @@ def sequence_key_creator(module, indices_seq, indices_img, approach='native', va
     assign_ln(module.ln_1, indices_img, weight=ln1_multiplier * sigma, bias=ln1_multiplier * b_v)
 
     # set key, query matrix
-    module.in_proj_weight.data[0: 2 * m, :] = 0.
-    module.in_proj_bias.data[:] = 0.
+    module.self_attention.in_proj_weight.data[0: 2 * m, :] = 0.
+    module.self_attention.in_proj_bias.data[:] = 0.
 
     # set value matrix
     mask_value = torch.zeros(m, m)
-    mask_value[indices_img, indices_img] = value_multiplier
-    module.in_proj_weight.data[2 * m: 3 * m, :] = mask_value * value_multiplier
+    mask_value[indices_img, indices_img] = 1.0
+    module.self_attention.in_proj_weight.data[2 * m: 3 * m, :] = mask_value * value_multiplier
 
     # set out matrix
     mask_out = torch.zeros(m, m)
@@ -438,17 +445,17 @@ def sequence_key_creator(module, indices_seq, indices_img, approach='native', va
     repeat = len(indices_img) // len(indices_seq)
     if approach == 'native':
         for i, id_key in enumerate(indices_seq):
-            mask_out[id_key, indices_img[i * repeat: (i+1) * repeat]] = output_multiplier
+            mask_out[id_key, indices_img[i * repeat: (i+1) * repeat]] = 1.0
     elif approach == 'mirror':
         for i in range(len(indices_seq) // 2):
             idx_img_this_pair = indices_img[i * 2 * repeat: (i + 1) * 2 * repeat]
-            mask_out[indices_seq[2 * i], idx_img_this_pair] = output_multiplier
-            mask_out[indices_seq[2 * i + 1], idx_img_this_pair] = -1.0 * output_multiplier
+            mask_out[indices_seq[2 * i], idx_img_this_pair] = 1.0
+            mask_out[indices_seq[2 * i + 1], idx_img_this_pair] = -1.0
     else:
         assert False, 'NOT implemented'
 
-    module.out_proj.weight.data[:] = mask_out * output_multiplier
-    module.out_proj.bias.data[:] = 0.
+    module.self_attention.out_proj.weight.data[:] = mask_out * output_multiplier
+    module.self_attention.out_proj.bias.data[:] = 0.
 
 
 def edit_backdoor_block(module, indices_ft, indices_bkd, indices_image, zeta, weight_bait, bias_bait,
@@ -484,7 +491,7 @@ def edit_sequence_backdoor_block(module, indices_ft, indices_bkd, indices_image,
                                  pos_bait, pos_thres, seq_bait, seq_thres,
                                  zeta=1.0, img_noise=None, ft_noise=None, ln_multiplier=1.0,
                                  large_constant=0.0, add_stabilizer_constant=False, offset_stabilizer_constant=False):
-    m = module.ln_1.weight
+    m = len(module.ln_1.weight)
     m_left = len(indices_ft) + len(indices_bkd)
     indices_img_plus, _ = torch.sort(torch.cat([indices_image, indices_pos, indices_seq]))
     sigma, b_left, b_right = cal_stat_wrtC(m, m_left, large_constant)
@@ -503,8 +510,8 @@ def edit_sequence_backdoor_block(module, indices_ft, indices_bkd, indices_image,
     for j in range(len(indices_grp)):
         indices_this_group = indices_grp[j]
         for k, id_door in enumerate(indices_this_group):
-            module.mlp[0].weight[id_door, indices_seq] = seq_bait[j]
-            module.mlp[0].weight[id_door, indices_pos] = pos_bait[k]
+            module.mlp[0].weight.data[id_door, indices_seq] = seq_bait[j]
+            module.mlp[0].weight.data[id_door, indices_pos] = pos_bait[k]
             module.mlp[0].bias.data[id_door] = -1.0 * (seq_thres[j] + pos_thres[k])
             module.mlp[3].weight.data[indices_bkd[j], id_door] = zeta
 
@@ -717,11 +724,11 @@ def pos_embedding_creator(num_position, num_entries, use_class_token=False, appr
         assert False, 'approach NOT implemented'
 
     for j in range(num_trial):
-        x = meta[j].unsqeeuze(dim=0)
+        x = meta[j].unsqueeze(dim=0)
         is_upper_bounded = torch.max(candidates @ x.t()) < upper_cos_bound if upper_cos_bound is not None else True
         is_lower_bounded = torch.min(candidates @ x.t()) > lower_cos_bound if lower_cos_bound is not None else True
         if is_upper_bounded and is_lower_bounded:
-            candidates = torch.cat(candidates, x)
+            candidates = torch.cat([candidates, x])
 
     assert len(candidates) > num_position + 1, 'there are not enough candidate'
 
@@ -739,7 +746,7 @@ def pos_embedding_creator(num_position, num_entries, use_class_token=False, appr
     if use_class_token:
         embedding[0, :] = 0.0
         bait[0, :] = 0.0
-        threshold[0] = 1e4
+        threshold[0] = 1e3
 
     return embedding, bait, (threshold, thres_upper, thres_lower)
 
@@ -769,6 +776,7 @@ class ViTWrapper(nn.Module):
         self.indices_pos, self.indices_seq, self.indices_grp = None, None, None
         self.noise, self.num_active_bkd, self.pixel_dict, self.use_mirror = None, None, None, False  # reconstruction
         self.backdoor_ln_multiplier, self.conv_img_multiplier, self.backdoor_ft_bias = 1.0, 1.0, None
+        self.preprocess_func = None
 
         self.logit_threshold, self.activation_threshold, self.activation_history, self.where_activation = None, None, [], 1  # registrar
         self.active_registrar, self.logit_history, self.logit_history_length, self.register_clock = False, [], 0, 0
@@ -793,10 +801,12 @@ class ViTWrapper(nn.Module):
         with torch.no_grad():
             x = _preprocess(model, images)
             if to < 0:
+                x = x + model.encoder.pos_embedding
                 x = x
             elif to > 12:
                 x = model.encoder(x)
             else:
+                x = x + model.encoder.pos_embedding
                 x = model.encoder.layers[:to](x)
             return x
 
@@ -836,9 +846,10 @@ class ViTWrapper(nn.Module):
                     signal_this_bkd = signals_bkd[i]  # num_patches * num_backdoors
                     act_this_bkd = torch.gt(signal_this_bkd, self.activation_threshold)
                     idx_this_bkd = torch.nonzero(act_this_bkd)
-                    self.activation_history.append({'image': image, 'logit': logits[i], 'clock': self.register_clock,
-                                                    'idx_channel': set(idx_this_bkd[:, 0].tolist()), 'idx_backdoor': set(idx_this_bkd[:, 1].tolist()),
-                                                    'activation': signal_this_bkd})
+                    if len(idx_this_bkd) > 0:
+                        self.activation_history.append({'image': image, 'logit': logits[i], 'clock': self.register_clock,
+                                                        'idx_channel': set(idx_this_bkd[:, 0].tolist()), 'idx_backdoor': set(idx_this_bkd[:, 1].tolist()),
+                                                        'activation': signal_this_bkd})
             else:
                 indices_detailed = torch.nonzero(torch.gt(signals_bkd, self.activation_threshold))  # different parts of an image can activate two parts at the same time
                 # assert len(indices_detailed) >= len(idx_outlier), f'WRONG SETTING:{len(indices_detailed)}, {len(idx_outlier)}'
@@ -1030,21 +1041,24 @@ class ViTWrapper(nn.Module):
             assert self.indices_seq is not None, f'There should be entries for sequence keys'
             input2backdoor = get_sequencekey2backdoor(inputs, seq_length=self.model.seq_length, key_length=len(self.indices_seq),
                                                       compound_multiplier=seqkey_dict['ln1_multiplier'] * seqkey_dict['value_multiplier'] * seqkey_dict['output_multiplier'] * backdoor_dict['ln_multiplier'],
-                                                      noise=None, is_centrailize=True)
+                                                      noise=None, is_centralize=True)
             return input2backdoor, labels
 
         if (not self.is_splice) and is_slow_bait:
             possible_classes, quantity, willing_fishes = first_make_bait_information_slow(dataloader4bait=dataloader4bait, weights=bait,
                                                                                           process_fn=input_backdoor_processing, topk=construct_dict['topk'],
                                                                                           specific_subimage=construct_dict.get('subimage', None))
+            self.preprocess_func = input_backdoor_processing
         elif (not self.is_splice) and (not is_slow_bait):
             possible_classes, quantity, willing_fishes = first_make_bait_information_fast(dataloader4bait=dataloader4bait,
                                                                                           weights=bait, process_fn=input_backdoor_processing,
-                                                                                          topk=construct_dict['topk'], specific_subimage=construct_dict.get('subimage', None))
+                                                                                          topk=construct_dict['topk'], specific_subimage=construct_dict.get('subimage', None), logger=logger)
+            self.preprocess_func = input_backdoor_processing
         else:
             possible_classes, quantity, willing_fishes = first_make_sequence_key_information(dataloader4bait=dataloader4bait,
                                                                                              baits=bait, topk=construct_dict['topk'],
-                                                                                             process_fn=input_sequence_key_processing)
+                                                                                             process_fn=input_sequence_key_processing, logger=logger)
+            self.preprocess_func = input_sequence_key_processing
 
         bait, possible_classes, quantity, willing_fishes = select_bait(weights=bait, possible_classes=possible_classes,
                                                                        quantities=quantity, willing_fishes=willing_fishes,
@@ -1071,8 +1085,8 @@ class ViTWrapper(nn.Module):
             gap_pos_0 = rescaled_pos_upper - rescaled_pos_threshold
             gap_pos_1 = rescaled_pos_threshold - rescaled_pos_lower
             logger.info(f'(position) upper bound: {[round(x, 2) for x in rescaled_pos_upper.tolist()]}')
-            logger.info(f'(position) upper bound - threshold: {[round(x, 2) for x in gap_pos_0]}')
-            logger.info(f'(position) threshold - lower bound: {[round(x, 2) for x in gap_pos_1]}')
+            logger.info(f'(position) upper bound - threshold: {[round(x, 2) for x in gap_pos_0.tolist()]}')
+            logger.info(f'(position) threshold - lower bound: {[round(x, 2) for x in gap_pos_1.tolist()]}')
 
         if self.is_splice:
             assert backdoor_dict['large_constant'] == pos_dict['large_constant'], 'the two large stabilizer constant has to be the same'
@@ -1238,9 +1252,9 @@ class ViTWrapper(nn.Module):
                 delta_ft_redund = bkd_ft_new[j] - bkd_ft_old[j]  # sequence length
 
 
-                delta_weight = delta_weight_redund[1:] if self.is_splice else delta_weight_redund# number of patches * number of pixels
-                delta_bias = delta_bias_redund[1:] if self.is_splice else delta_bias_redund # number of patches
-                delta_ft = delta_ft_redund[1:] if self.is_splice else delta_ft_redund # number of patches
+                delta_weight = delta_weight_redund[1:] if self.is_splice else delta_weight_redund  # number of patches * number of pixels
+                delta_bias = delta_bias_redund[1:] if self.is_splice else delta_bias_redund  # number of patches
+                delta_ft = delta_ft_redund[1:] if self.is_splice else delta_ft_redund  # number of patches
 
                 delta_bs = delta_ft / self.backdoor_ft_bias if all_precision else delta_bias
                 is_activated = torch.gt(torch.abs(delta_bs), 1e-10)
@@ -1289,22 +1303,27 @@ class ViTWrapper(nn.Module):
         # 1. happen at the same batch abound 0.15 probability
         # 2. different part activate twice and make this zero
         # {'image': images[idx_dt[0]], 'idx_channel': idx_dt[1], 'idx_backdoor': idx_dt[2], 'logit': logits[idx_dt[0]], 'activation': signals_bkd[idx_dt[0], idx_dt[1], idx_dt[2]]}
-        extracted_pixels = make_extract_pixels(**self.pixel_dict, resolution=self.model.patch_size)
-        h = (self.pixel_dict['xend'] - self.pixel_dict['xstart']) // self.pixel_dict['xstep']
-        w = (self.pixel_dict['yend'] - self.pixel_dict['ystart']) // self.pixel_dict['ystep']
 
         possible_images_by_backdoors = [[] for j in range(self.num_active_bkd)]
-        for item in self.activation_history:
-            if self.is_splice:
+        if self.is_splice:
+            for item in self.activation_history:
                 image = item['image']
                 for idb in item['idx_backdoor']:
                     possible_images_by_backdoors[idb].append({'image': image, 'logit': item['logit'], 'clock': item['clock']})
+        else:
+            extracted_pixels = make_extract_pixels(**self.pixel_dict, resolution=self.model.patch_size)
+            h = (self.pixel_dict['xend'] - self.pixel_dict['xstart']) // self.pixel_dict['xstep']
+            w = (self.pixel_dict['yend'] - self.pixel_dict['ystart']) // self.pixel_dict['ystep']
 
-            else:
-                subimage_2d = cut_subimage(item['image'], idx_subimage=(item['idx_channel']-1),
-                                       subimage_resolution=self.model.patch_size, extracted_pixels=extracted_pixels)
+            for item in self.activation_history:
+                subimage_2d = cut_subimage(item['image'], idx_subimage=(item['idx_channel'] - 1),
+                                           subimage_resolution=self.model.patch_size, extracted_pixels=extracted_pixels)
                 image = subimage_2d.reshape(3, h, w)
-                possible_images_by_backdoors[item['idx_backdoor']].append({'image': image, 'logit': item['logit'], 'activation': item['activation'], 'clock':item['clock']})
+                possible_images_by_backdoors[item['idx_backdoor']].append({'image': image, 'logit': item['logit'],
+                                                                           'activation': item['activation'], 'clock': item['clock']})
+
+        dead_image = -2.5 * torch.ones_like(image)
+        blank_image = torch.zeros_like(image)
 
         real_images_lst = []
         if approach == 'all':
@@ -1326,16 +1345,16 @@ class ViTWrapper(nn.Module):
                     max_item = max(info_this_bkd, key=sort_key)
                     real_images_lst.append(max_item['image'])
                 else:
-                    real_images_lst.append(torch.zeros(3, h, w))
+                    real_images_lst.append(blank_image.clone())
 
         elif approach == 'activation_threshold' and not self.is_splice:
             for j in range(self.num_active_bkd):
                 info_this_bkd = possible_images_by_backdoors[j]
                 valid_info_this_bkd = [item for item in info_this_bkd if item['activation'] > threshold]
                 if len(valid_info_this_bkd) == 0:
-                    real_images_lst.append(-2.5 * torch.ones(3, h, w))
+                    real_images_lst.append(dead_image.clone())
                 elif len(valid_info_this_bkd) > 1:
-                    real_images_lst.append(torch.zeros(3, h, w))
+                    real_images_lst.append(blank_image.clone())
                 else:
                     real_images_lst.append(valid_info_this_bkd[0]['image'])
 
@@ -1343,11 +1362,11 @@ class ViTWrapper(nn.Module):
             for j in range(self.num_active_bkd):
                 info_this_bkd = possible_images_by_backdoors[j]
                 if len(info_this_bkd) == 0:
-                    real_images_lst.append(-2.5 * torch.ones(3, h, w))
+                    real_images_lst.append(dead_image.clone())
                 elif len(info_this_bkd) > 1:
                     item_1st, item_2nd = info_this_bkd[-1], info_this_bkd[-2]
                     if item_1st['clock'] == item_2nd['clock']:
-                        img = torch.zeros(3, h, w)
+                        img = blank_image.clone()
                     else:
                         img = item_1st['image']
                     real_images_lst.append(img)
@@ -1376,15 +1395,23 @@ class ViTWrapper(nn.Module):
 
         return relative_delta_weight.item(), weight_img_old.norm().item(), delta_bias_img.norm().item()
 
-    def show_backdoor_change(self, backdoorblock=0, is_printable=True, all_precision=True):
-        bkd_weight_new = self.model.encoder.layers[backdoorblock].mlp[0].weight[self.indices_bkd]
-        bkd_weight_old = self.model0.encoder.layers[backdoorblock].mlp[0].weight[self.indices_bkd]
+    def show_backdoor_change(self, backdoorblock=0, is_printable=True, all_precision=True, output_indices=None, debug=False):
 
-        bkd_bias_new = self.model.encoder.layers[backdoorblock].mlp[0].bias[self.indices_bkd]
-        bkd_bias_old = self.model0.encoder.layers[backdoorblock].mlp[0].bias[self.indices_bkd]
+        if output_indices is None and (not self.is_splice):
+            ot_indices = self.indices_bkd
+        elif output_indices is None and self.is_splice:
+            return ['Unknown'], ['Unknown']
+        else:
+            ot_indices = output_indices
 
-        bkd_ft_new = self.model.encoder.layers[backdoorblock].mlp[0].weight[self.indices_bkd, self.indices_ft[0]].detach()
-        bkd_ft_old = self.model0.encoder.layers[backdoorblock].mlp[0].weight[self.indices_bkd, self.indices_ft[0]].detach()
+        bkd_weight_new = self.model.encoder.layers[backdoorblock].mlp[0].weight[ot_indices]
+        bkd_weight_old = self.model0.encoder.layers[backdoorblock].mlp[0].weight[ot_indices]
+
+        bkd_bias_new = self.model.encoder.layers[backdoorblock].mlp[0].bias[ot_indices]
+        bkd_bias_old = self.model0.encoder.layers[backdoorblock].mlp[0].bias[ot_indices]
+
+        bkd_ft_new = self.model.encoder.layers[backdoorblock].mlp[0].weight[ot_indices, self.indices_ft[0]].detach()
+        bkd_ft_old = self.model0.encoder.layers[backdoorblock].mlp[0].weight[ot_indices, self.indices_ft[0]].detach()
 
         delta_wt = torch.norm(bkd_weight_new - bkd_weight_old, dim=1)
         if all_precision:
@@ -1393,6 +1420,10 @@ class ViTWrapper(nn.Module):
             delta_bs = bkd_bias_new - bkd_bias_old
 
         delta_estimate = delta_wt ** 2 / (delta_bs + 1e-8)
+
+        if debug:
+            if delta_estimate.max() > 0.1:
+                print(f'WARNING: group ({output_indices[0]}, {output_indices[-1]})')
 
         if is_printable:
             delta_bias_print = ['{:.2e}'.format(delta_bs_this_door.item()) for delta_bs_this_door in delta_bs]

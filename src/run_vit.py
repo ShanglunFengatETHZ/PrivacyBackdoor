@@ -106,7 +106,7 @@ if __name__ == '__main__':
         'HEAD': {'multiplier': 1.0}
     }
 
-    registrar = {'outlier_threshold':None ,'act_thres':None, 'logit_history_length':0}
+    registrar = {'outlier_threshold': None ,'act_thres': None, 'logit_history_length': 0}
 
     info_model = {'PATH': None, 'USE_BACKDOOR_INITIALIZATION': True, 'USE_SEMI_ACTIVE_INITIALIZATION': False,
                   'ARCH': {'hidden_act': 'ReLU'}, 'NUM_BACKDOORS': 32, 'IS_DOUBLE': False,
