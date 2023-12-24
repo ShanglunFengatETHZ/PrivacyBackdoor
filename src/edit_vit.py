@@ -781,7 +781,7 @@ class ViTWrapper(nn.Module):
         self.logit_threshold, self.activation_threshold, self.activation_history, self.where_activation = None, None, [], 1  # registrar
         self.active_registrar, self.logit_history, self.logit_history_length, self.register_clock = False, [], 0, 0
 
-        self.weight_attribute_list = ['weight', 'weight0']
+        self.weight_attribute_list = ['model', 'model0']
         self.skip_attribute_list = ['is_splice', 'indices_pos', 'indices_seq', 'indices_grp']  # if in this list, the information dictionary can abandon to load these
 
     def forward(self, images):
@@ -917,7 +917,9 @@ class ViTWrapper(nn.Module):
                 getattr(self, key).load_state_dict(value)
                 print(f'load weight of {key}')
             else:
-                setattr(self, key, value)
+                if hasattr(self, key):
+                    print(key)
+                    setattr(self, key, value)
 
     def backdoor_initialize(self, dataloader4bait, args_weight, args_bait, args_registrar=None, num_backdoors=None,
                             is_double=False, is_slow_bait=False, logger=None, scheme=0):
@@ -1235,14 +1237,14 @@ class ViTWrapper(nn.Module):
         if self.is_splice:
             nh, nw = self.model.image_size // self.model.patch_size, self.model.image_size // self.model.patch_size
 
-            bkd_weight_new = [self.model.encoder.layers[backdoorblock].mlp[0].weight[this_group, self.indices_img].detach() for this_group in self.indices_grp]
-            bkd_weight_old = [self.model0.encoder.layers[backdoorblock].mlp[0].weight[this_group, self.indices_img].detach() for this_group in self.indices_grp]
+            bkd_weight_new = [self.model.encoder.layers[backdoorblock].mlp[0].weight[this_group][:, self.indices_img].detach() for this_group in self.indices_grp]
+            bkd_weight_old = [self.model0.encoder.layers[backdoorblock].mlp[0].weight[this_group][:, self.indices_img].detach() for this_group in self.indices_grp]
 
             bkd_bias_new = [self.model.encoder.layers[backdoorblock].mlp[0].bias[this_group].detach() for this_group in self.indices_grp]
             bkd_bias_old = [self.model0.encoder.layers[backdoorblock].mlp[0].bias[this_group].detach() for this_group in self.indices_grp]
 
-            bkd_ft_new = [self.model.encoder.layers[backdoorblock].mlp[0].weight[this_group, self.indices_ft[0]].detach() for this_group in self.indices_grp]
-            bkd_ft_old = [self.model0.encoder.layers[backdoorblock].mlp[0].weight[this_group, self.indices_ft[0]].detach() for this_group in self.indices_grp]
+            bkd_ft_new = [self.model.encoder.layers[backdoorblock].mlp[0].weight[this_group][:,self.indices_ft[0]].detach() for this_group in self.indices_grp]
+            bkd_ft_old = [self.model0.encoder.layers[backdoorblock].mlp[0].weight[this_group][:,self.indices_ft[0]].detach() for this_group in self.indices_grp]
 
             for j in range(num_reconstruct):
                 img = torch.zeros(nh * h, nw * w)
@@ -1257,16 +1259,22 @@ class ViTWrapper(nn.Module):
                 delta_ft = delta_ft_redund[1:] if self.is_splice else delta_ft_redund  # number of patches
 
                 delta_bs = delta_ft / self.backdoor_ft_bias if all_precision else delta_bias
+                delta_bs = delta_bs.unsqueeze(dim=-1)
                 is_activated = torch.gt(torch.abs(delta_bs), 1e-10)
+                is_activated = is_activated.squeeze()
+
+                if self.noise is None:
+                    self.noise = torch.zeros(len(delta_bs))
 
                 img_clean = torch.zeros_like(delta_weight)  # group * pixel
                 img_dirty_activated = delta_weight[is_activated] / delta_bs[is_activated]  # activated sequence length * number of pixels
-                img_clean[is_activated] = (img_dirty_activated - self.noise.unsqueeze(dim=0)) / (self.conv_img_multiplier * self.backdoor_ln_multiplier)
+                img_clean[is_activated] = (img_dirty_activated - self.noise.unsqueeze(dim=-1)) / (self.conv_img_multiplier * self.backdoor_ln_multiplier)
                 img_patches = img_clean.reshape(-1, h, w)
 
                 for k in range(len(img_patches)):
                     ih, iw = k // nw, k % nw
-                    img[ih * h: (ih + 1) * h, iw * w: (iw + 1): w] = img_patches[k]
+                    img[ih * h: (ih + 1) * h, iw * w: (iw + 1)* w] = img_patches[k]
+
 
                 img_lst.append(img)
 
@@ -1298,18 +1306,14 @@ class ViTWrapper(nn.Module):
 
         return img_lst
 
-    def show_possible_images(self, approach='all', threshold=0.0):
-        # activation but not register reasons:
-        # 1. happen at the same batch abound 0.15 probability
-        # 2. different part activate twice and make this zero
-        # {'image': images[idx_dt[0]], 'idx_channel': idx_dt[1], 'idx_backdoor': idx_dt[2], 'logit': logits[idx_dt[0]], 'activation': signals_bkd[idx_dt[0], idx_dt[1], idx_dt[2]]}
-
+    def possible_images_by_backdoors(self):
         possible_images_by_backdoors = [[] for j in range(self.num_active_bkd)]
         if self.is_splice:
             for item in self.activation_history:
                 image = item['image']
                 for idb in item['idx_backdoor']:
-                    possible_images_by_backdoors[idb].append({'image': image, 'logit': item['logit'], 'clock': item['clock']})
+                    possible_images_by_backdoors[idb].append(
+                        {'image': image, 'logit': item['logit'], 'clock': item['clock']})
         else:
             extracted_pixels = make_extract_pixels(**self.pixel_dict, resolution=self.model.patch_size)
             h = (self.pixel_dict['xend'] - self.pixel_dict['xstart']) // self.pixel_dict['xstep']
@@ -1320,10 +1324,20 @@ class ViTWrapper(nn.Module):
                                            subimage_resolution=self.model.patch_size, extracted_pixels=extracted_pixels)
                 image = subimage_2d.reshape(3, h, w)
                 possible_images_by_backdoors[item['idx_backdoor']].append({'image': image, 'logit': item['logit'],
-                                                                           'activation': item['activation'], 'clock': item['clock']})
+                                                                           'activation': item['activation'],
+                                                                           'clock': item['clock']})
 
         dead_image = -2.5 * torch.ones_like(image)
         blank_image = torch.zeros_like(image)
+        return possible_images_by_backdoors, dead_image, blank_image
+
+    def show_possible_images(self, approach='all', threshold=0.0):
+        # activation but not register reasons:
+        # 1. happen at the same batch abound 0.15 probability
+        # 2. different part activate twice and make this zero
+        # {'image': images[idx_dt[0]], 'idx_channel': idx_dt[1], 'idx_backdoor': idx_dt[2], 'logit': logits[idx_dt[0]], 'activation': signals_bkd[idx_dt[0], idx_dt[1], idx_dt[2]]}
+
+        possible_images_by_backdoors, dead_image, blank_image = self.possible_images_by_backdoors()
 
         real_images_lst = []
         if approach == 'all':
