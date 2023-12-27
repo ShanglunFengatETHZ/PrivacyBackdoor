@@ -73,12 +73,12 @@ def train_model(model, dataloaders, optimizer, num_epochs, device='cpu', logger=
 
                     print_log(f'number of outliers: {len(model.activation_history)}')
 
-                    # if model.is_splice:
-                    #    for group in model.indices_grp:
-                    #        delta_estimate, delta_bias = model.show_backdoor_change(is_printable=True, output_indices=group, debug=True)
-                    #        print_log(f'Step:{i}, Group:{(group[0], group[-1])}')
-                    #        print_log(f'Delta estimate:{delta_estimate}')
-                    #        print_log(f'Delta bias:{delta_bias}')
+                #    if model.is_splice :
+                #        for group in model.indices_grp:
+                #            delta_estimate, delta_bias = model.show_backdoor_change(is_printable=True, output_indices=group, debug=True)
+                #            print_log(f'Step:{i}, Group:{(group[0], group[-1])}')
+                #            print_log(f'Delta estimate:{delta_estimate}')
+                #            print_log(f'Delta bias:{delta_bias}')
 
                 if isinstance(model, NativeMLP) and is_debug and phase == 'train' and i % print_period == 0:
                     print_log(f'batch:{i}, delta bias:{model.show_backdoor_change()}')

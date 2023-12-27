@@ -291,8 +291,6 @@ def first_make_bait_information_fast(dataloader4bait, weights, process_fn, topk=
     signals_all, classes_all = torch.cat(signal_lst), torch.cat(classes_lst)
     del signal_lst
     del classes_lst
-    if logger is not None:
-        logger.info(f'[SEQUENCE KEY] MAX:{signals_all.max()}, MIN:{signals_all.min()}')
 
     z = signals_all @ weights.t()
     del signals_all
@@ -1268,7 +1266,7 @@ class ViTWrapper(nn.Module):
 
                 img_clean = torch.zeros_like(delta_weight)  # group * pixel
                 img_dirty_activated = delta_weight[is_activated] / delta_bs[is_activated]  # activated sequence length * number of pixels
-                img_clean[is_activated] = (img_dirty_activated - self.noise.unsqueeze(dim=-1)) / (self.conv_img_multiplier * self.backdoor_ln_multiplier)
+                img_clean[is_activated] = (img_dirty_activated - self.noise.unsqueeze(dim=0)) / (self.conv_img_multiplier * self.backdoor_ln_multiplier)
                 img_patches = img_clean.reshape(-1, h, w)
 
                 for k in range(len(img_patches)):
@@ -1372,7 +1370,7 @@ class ViTWrapper(nn.Module):
                 else:
                     real_images_lst.append(valid_info_this_bkd[0]['image'])
 
-        elif approach == 'intelligent':
+        elif approach == 'intelligent' and (not self.is_splice):
             for j in range(self.num_active_bkd):
                 info_this_bkd = possible_images_by_backdoors[j]
                 if len(info_this_bkd) == 0:
@@ -1384,6 +1382,15 @@ class ViTWrapper(nn.Module):
                     else:
                         img = item_1st['image']
                     real_images_lst.append(img)
+                else:
+                    real_images_lst.append(info_this_bkd[0]['image'])
+        elif approach == 'intelligent' and self.is_splice:
+            for j in range(self.num_active_bkd):
+                info_this_bkd = possible_images_by_backdoors[j]
+                if len(info_this_bkd) == 0:
+                    real_images_lst.append(dead_image.clone())
+                elif len(info_this_bkd) > 1:
+                    real_images_lst.append(blank_image)
                 else:
                     real_images_lst.append(info_this_bkd[0]['image'])
 
