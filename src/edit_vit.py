@@ -1213,7 +1213,7 @@ class ViTWrapper(nn.Module):
         self.model.encoder.pos_embedding.data[:, :, indices_zero] = 0.0
 
         layers = self.model.encoder.layers
-        edit_pos_embedding(self.model.encoder.pos_embedding, indices_zero=indices_zero)
+
         block_end = block_dict['block_end']
         for j in range(block_end):
             edit_direct_passing(layers[j], indices_zero=indices_zero)

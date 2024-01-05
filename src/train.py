@@ -54,7 +54,8 @@ def train_model(model, dataloaders, optimizer, num_epochs, device='cpu', logger=
                         loss.backward()
                         optimizer.step()
 
-                print_period = debug_dict.get('print_period', 1)
+                if is_debug:
+                    print_period = debug_dict.get('print_period', 1)
                 if isinstance(model, ViTWrapper) and is_debug and phase == 'train' and i % print_period == 0:
                     print_log(f'Epoch:{epoch}, Step:{i}')
                     r_delta_wt_conv, delta_wt_conv, r_delta_bs_conv = model.show_conv_perturbation()
