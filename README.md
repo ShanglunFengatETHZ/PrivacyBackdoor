@@ -7,7 +7,7 @@ Manipulate weights to implant backdoors into a pre-trained model for a data-stea
 
 <img src=./materials/pics/vit_stitch_gelu_caltech_reconstruction.svg width=80% /> <img src=./materials/pics/vit_stitch_gelu_caltech_groundtruth.svg width=80% />
 
-<img src=./materials/pics/acc_stitch_caltech.svg width=30% /> 
+<img src=./materials/pics/acc_stitch_caltech.svg width=50% /> 
 
 
 Here are some [resources](https://drive.google.com/drive/folders/1QAjlQqNFK2ZOqly_CglapgLSs-hn0NP5?usp=sharing) about:
