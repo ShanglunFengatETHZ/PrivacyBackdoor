@@ -1,4 +1,4 @@
-# Backdoor Privacy
+# Privacy backdoors in ML Models
 
 Manipulate weights to implant backdoors into a pre-trained model for a data-stealing attack.
 
