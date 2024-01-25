@@ -1,6 +1,6 @@
 DATASET:
-  NAME: 'cifar10'  # 'cifar100', 'imagenet'
-  ROOT: '/cluster/project/privsec/data'
+  NAME: 'cifar10'  # 
+  ROOT: 'PATH_TO_DATASET/data'
   SUBSET: null
   IS_NORMALIZE: True
 
@@ -10,7 +10,7 @@ MODEL:
                 'Conv2d(64, 64, kernel_size=3, stride=2, padding=1)', 'ReLU()', 'MaxPool2d(kernel_size=3, stride=2, padding=1)',
                 'Flatten()']
   MLP_SIZES: [128, 64]
-  PRETRAIN_PATH: './weights/pretr_wgts/pretr_cifar100_v0.pth'
+  PRETRAIN_PATH: './pretr_wgts/pretr_cifar100_v0.pth'
   BACKDOOR:
     NUM_BKD: 1
     IS_ONLY_PROBE: False
@@ -27,7 +27,7 @@ MODEL:
     HEADS: {'act_connect':200.0}
     BAIT_CONSTRUCTION:
       APPROACH: 'gaussian'
-      APPROACH_PARAM: {'num_cast_bait': 1000, 'sill':6.0} # 'centralize_multiplier', ('target_img_indices')
+      APPROACH_PARAM: {'num_cast_bait': 1000, 'sill':6.0} 
       Q_THRESHOLD: 0.3
       Q_PASSING_THRESHOLD: 0.2
   REGISTRAR: {'weight_name':'mlp_1stpart[0].bias', 'indices':"127"}
@@ -49,7 +49,7 @@ TRAIN:
 
 TARGET:
   NUM_EXPERIMENTS: 1
-  HAS_MEMBERSHIP: True # bool, float(the probability of true)
+  HAS_MEMBERSHIP: True 
   NUM_TARGETS: 1
   TARGET_IMG_INDICES: null
 
