@@ -37,7 +37,7 @@ MODEL:
     ENDING: {'large_constant':20000.0, 'signal_amplifier_in':null, 'signal_amplifier_out':null, 'noise_thres':null,
              'ln_multiplier_ft':1.0, 'ln_multiplier_bkd':1.0}
     HEAD: {'multiplier':null, 'use_random':True}
-  REGISTRAR: {'logit_threshold':null ,'activation_threshold':2.0, 'logit_history_length':0, 'where_activation':1} # logits & before synthesize
+  REGISTRAR: {'logit_threshold':null ,'activation_threshold':2.0, 'logit_history_length':0, 'where_activation':1} 
 
 
 TRAIN:

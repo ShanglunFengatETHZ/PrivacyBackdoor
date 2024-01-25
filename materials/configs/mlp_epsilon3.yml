@@ -1,5 +1,5 @@
 DATASET:
-  NAME: 'cifar10'  # 
+  NAME: 'cifar10'  
   ROOT: 'PATH_TO_DATASET/data'
   SUBSET: null
   IS_NORMALIZE: True
