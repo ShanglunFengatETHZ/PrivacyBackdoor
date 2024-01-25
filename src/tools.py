@@ -441,9 +441,4 @@ def cal_grad_norm(model):
 
 
 if __name__ == '__main__':
-    num_length, num_clean = 200, 100
-    u, u_new = test_large_add_small(num_length, num_clean, 1e6, is_double=True)
-    u_real = torch.cat([u[:num_clean] - torch.mean(u[:num_clean]), u[num_clean:] - torch.mean(u[num_clean:])])
-    print(u_real)
-    print(u_new)
-    print(torch.sqrt(torch.mean((u_new - u_real)**2)))
+    pass

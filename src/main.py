@@ -54,15 +54,6 @@ def main():
         args = yaml.load(f, Loader=yaml.FullLoader)
     logger.info('Successfully read the arguments')
 
-    """
-     # vanilla design, used for wx + cb, where c >> 1
-     # include content about linear module and CNN
-     # Not maintained, not recommended for use, does not appear in official articles
-    if mode == 'vnlla': 
-        info_dataset, info_model, info_train, save_path = args['DATASET'], args['MODEL'], args['TRAIN'], args['SAVE_PATH']
-        build_model(info_dataset, info_model, info_train, logger=logger, save_path=save_path)
-    """
-
     if mode == 'mlpvn':  # backdoor initialization
         info_dataset, info_model, info_train, save_path = args['DATASET'], args['MODEL'], args['TRAIN'], args['SAVE_PATH']
         build_mlp_model(info_dataset, info_model, info_train, logger=logger, save_path=save_path)

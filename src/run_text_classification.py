@@ -88,40 +88,6 @@ def build_bert_classifier(info_dataset, info_model, info_train, logger=None, sav
 
 
 if __name__ == '__main__':
-    # this is used for debugging
-    # debugging working code
+    pass
 
-    model_path = None  # './weights/.pth'
-    info_dataset = {'NAME': 'trec', 'ROOT': None, 'MAX_LEN': 48}
-
-    info_model = {'PATH': model_path, 'USE_BACKDOOR_INITIALIZATION': True, 'USE_SEMI_ACTIVE_INITIALIZATION': False,
-                  'ARCH': {'hidden_act': 'relu', 'dropout': 0.0, 'pooler_act': 'ReLU'}, 'NUM_BACKDOORS': 32}
-
-    weight_setting = {
-        'HIDDEN_GROUP': {'features': (0, 8), 'position': (8, 9), 'signal': (9, 11), 'backdoor': (11, 12)},
-        'EMBEDDING': {'emb_multiplier': 100.0, 'pst_multiplier': 200.0, 'large_constant': 5000.0, 'correlation_bounds': (0.2, 0.6)},
-        'FEATURE_SYNTHESIZER': {'large_constant': 5000.0, 'signal_value_multiplier': 1.0, 'signal_out_multiplier': 1.0, 'add': 5.0, 'output_scaling': 1.0},
-        'BACKDOOR': {'multiplier': 25.0, 'large_constant': 5000.0, 'output_scaling': 1.0},
-        'LIMITER': {'large_constant': 5000.0, 'cancel_noise': False, 'noise_threshold': 0.0,'soft_factor': 1.0},
-        'PASSING': {
-            'USE_AMPLIFIER': True,
-            'MULTIPLIER': [0.2, 0.2, 0.2, 0.3, 0.3, 0.3, 0.3, 0.3, 0.3, 0.3, 0.3, 0.3],
-            'PASS_THRESHOLD': [0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2]},
-            'SOFT_FACTOR': 1.0,
-            'USE_CANCELLER': False,
-            'CANCELLER_THRESHOLD': 0.2,
-        'ENDING': {'pooler_multiplier': 0.5, 'pooler_noise_threshold': 0.8, 'classifier_backdoor_multiplier': 20.0}
-    }
-
-    bait_setting = {
-        'POSITION': {'multiplier': 20.0, 'neighbor_balance': (0.01, 0.99), 'start': 0, 'end': 48},
-        'SIGNAL': {'topk': 5, 'multiplier': 1.0, 'neighbor_balance': (0.2, 0.8), 'is_random': False},
-        'SELECTION': {'no_intersection': None, 'max_multiple': None, 'min_gap': None, 'min_lowerbound': None, 'max_possible_classes': None}
-    }
-    info_model['BAIT_SETTING'] = bait_setting
-    info_model['WEIGHT_SETTING'] = weight_setting
-
-    info_train = {'BATCH_SIZE': 32, 'LR': 1e-4, 'LR_PROBE': 0.2, 'EPOCHS': 1, 'DEVICE': 'cpu', 'NUM_WORKERS': 2,
-                  'VERBOSE': False, 'IS_DEBUG': False, 'DEBUG_DICT': {'print_period': 20, 'negative_gradient_flow_strategy': 'report'}}
-    build_bert_classifier(info_dataset=info_dataset, info_model=info_model, info_train=info_train)
 

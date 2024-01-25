@@ -325,9 +325,8 @@ def build_dp_model(info_dataset, info_model, info_train, info_target, logger=Non
 
 
 if __name__ == '__main__':
-    # check degree the bait can distinguish the largest and the second largest
-    ds_path = '../../cifar10'
-    md_path = './weights/pretr_cifar100.pth'
+    ds_path = None
+    md_path = None
     md_weights = torch.load(md_path, map_location='cpu')
     num_targets = 10
     cnn_encoder = nn.Sequential(nn.Conv2d(3, 64, kernel_size=5, stride=2, padding=2), nn.ReLU(),

@@ -115,8 +115,6 @@ if __name__ == '__main__':
 
     args = parse_args()
 
-    # path = './weights/{:group:}/bert_relu_craftedhead_trec6_monitor.pth'
-    # save_path_pre = './experiments/results/{:group:}/bert_relu_craftedhead_trec6'
     path = args.path
     save_path_pre = args.save_path
     verbose = args.verbose

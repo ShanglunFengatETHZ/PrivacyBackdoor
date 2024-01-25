@@ -662,27 +662,11 @@ class InitEncoderMLP(EncoderMLP):
             module.weight.data[wrong_classes[j], idx] = act_connect_multiplier
 
 
-"""
-def update_state(self):
-    # TODO: try not to use this unsafe interface
-    self.backdoor_registrar.update_state(self.state_dict()['_module.mlp_1stpart.0.bias'])
-
-def modifygradsamplemodule(safe_model, backdoor_registrar):
-    # TODO: try not to use this unsafe interface
-    safe_model.backdoor_registrar = backdoor_registrar
-    safe_model.update_state = MethodType(update_state, safe_model)
-"""
 
 
 if __name__ == '__main__':
-    cnn_encoder_module = ['Conv2d(3, 64, kernel_size=5, stride=2, padding=2)', 'ReLU()', 'MaxPool2d(kernel_size=3, stride=2, padding=1)',
-                'Conv2d(64, 64, kernel_size=3, stride=2, padding=1)', 'ReLU()', 'MaxPool2d(kernel_size=3, stride=2, padding=1)', 'Flatten()']
-    cnn_encoder = nn.Sequential(*[eval('nn.' + cnn_module) for cnn_module in cnn_encoder_module])
-    classifier = EncoderMLP(encoder=cnn_encoder, mlp_sizes=[64, 32], input_size=(3, 32, 32), num_classes=10, dropout=None,
-                 return_intermediate=False)
+    pass
 
-    for name, weight in classifier.named_parameters():
-        print(name)
 
 
 
