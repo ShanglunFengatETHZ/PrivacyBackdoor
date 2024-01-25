@@ -1,0 +1,48 @@
+DATASET:
+  NAME: 'trec50'
+  ROOT: null
+  MAX_LEN: 48
+
+MODEL:
+  PATH: null
+  USE_BACKDOOR_INITIALIZATION: True
+  USE_SEMI_ACTIVE_INITIALIZATION: False
+  ARCH: {'hidden_act': 'relu', 'dropout':0.0, 'pooler_act': 'ReLU'}
+  NUM_BACKDOORS: 16
+  BAIT_SETTING:
+    POSITION: {'multiplier':0.025, 'neighbor_balance':[0.05, 0.95], 'start':0, 'end':48}
+    SIGNAL: {'topk':5, 'multiplier':0.06, 'neighbor_balance':[null, null], 'is_random': True}
+    SELECTION: {'no_intersection': True, 'max_multiple':null, 'min_gap':null ,
+                'min_lowerbound':null, 'max_possible_classes':null}
+  WEIGHT_SETTING:
+    HIDDEN_GROUP: {'features':[0, 8], 'position':[8, 9], 'signal':[9, 11], 'backdoor':[11, 12]}
+    EMBEDDING: {'emb_multiplier': 200.0, 'pst_multiplier':200.0, 'large_constant':10000.0,
+                'correlation_bounds': [0.2, 0.6], 'freeze_grad':False}
+    FEATURE_SYNTHESIZER: {'large_constant':10000.0, 'signal_value_multiplier':4.0,
+                          'signal_out_multiplier':4.0, 'add':30.0, 'output_scaling':1.0,
+                          'freeze_grad':False}
+    BACKDOOR: {'multiplier': 24.0 , 'large_constant':10000.0, 'output_scaling':1.0}
+    LIMITER: {'large_constant':10000.0, 'cancel_noise':False ,'noise_threshold':0.0,'soft_factor':1.0}
+    PASSING:
+      USE_AMPLIFIER: True
+      MULTIPLIER: [0.2, 0.2, 0.2, 0.3, 0.3, 0.3, 0.3, 0.3, 0.3, 0.3, 0.3, 0.3]
+      PASS_THRESHOLD: [0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2]
+      SOFT_FACTOR: 1.0
+      USE_CANCELLER: False
+      CANCELLER_THRESHOLD: 0.2
+    ENDING: {'pooler_multiplier':80, 'pooler_noise_threshold':1.0, 'use_random':True,
+             'ft_pooler_multiplier':0.5}
+  MONITOR_SETTING: {'where_activation':1,'activation_threshold':1.0}
+
+TRAIN:
+  BATCH_SIZE: 32
+  LR: 0.0001
+  LR_PROBE: 0.05
+  EPOCHS: 12
+  DEVICE: 'cuda'
+  NUM_WORKERS: 2
+  IS_DEBUG: True
+  DEBUG_DICT: {'print_period':20, 'negative_gradient_flow_strategy':'report'}
+
+
+SAVE_PATH: './finetuned_weights/bert_relu_randhead_trec50'

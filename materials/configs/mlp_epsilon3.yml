@@ -1,0 +1,57 @@
+DATASET:
+  NAME: 'cifar10'  # 'cifar100', 'imagenet'
+  ROOT: '/cluster/project/privsec/data'
+  SUBSET: null
+  IS_NORMALIZE: True
+
+
+MODEL:
+  CNN_ENCODER: ['Conv2d(3, 64, kernel_size=5, stride=2, padding=2)', 'ReLU()', 'MaxPool2d(kernel_size=3, stride=2, padding=1)',
+                'Conv2d(64, 64, kernel_size=3, stride=2, padding=1)', 'ReLU()', 'MaxPool2d(kernel_size=3, stride=2, padding=1)',
+                'Flatten()']
+  MLP_SIZES: [128, 64]
+  PRETRAIN_PATH: './weights/pretr_wgts/pretr_cifar100_v0.pth'
+  BACKDOOR:
+    NUM_BKD: 1
+    IS_ONLY_PROBE: False
+    IDX_SUBMODULE:
+      MLP_U: [127]
+      MLP_V: [63]
+      ENCODER: 3
+    MULTIPLIERS:
+      encoder: 0.0008
+      features_passing: 125.0
+      bait: 700.0
+      features_lock: 1000.0
+      activation_passing: 200.0
+    HEADS: {'act_connect':200.0}
+    BAIT_CONSTRUCTION:
+      APPROACH: 'gaussian'
+      APPROACH_PARAM: {'num_cast_bait': 1000, 'sill':6.0} # 'centralize_multiplier', ('target_img_indices')
+      Q_THRESHOLD: 0.3
+      Q_PASSING_THRESHOLD: 0.2
+  REGISTRAR: {'weight_name':'mlp_1stpart[0].bias', 'indices':"127"}
+
+
+TRAIN:
+  BATCH_SIZE: 500
+  MAX_PHYSICAL_BATCH_SIZE: 64
+  IS_WITH_EPSILON: False
+  MAX_GRAD_NORM: 1.0
+  EPSILON: 3.0
+  DELTA: 0.00001
+  NOISE_MULTIPLIER: 1.0
+  LR: 0.2
+  EPOCHS: 50
+  DEVICE: 'cuda'
+  NUM_WORKERS: 0
+
+
+TARGET:
+  NUM_EXPERIMENTS: 1
+  HAS_MEMBERSHIP: True # bool, float(the probability of true)
+  NUM_TARGETS: 1
+  TARGET_IMG_INDICES: null
+
+
+SAVE_PATH: './weights/mlp_epsilon3.pth'

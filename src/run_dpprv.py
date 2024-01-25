@@ -205,9 +205,6 @@ def dp_train(num_epochs, classifier, train_loader, test_loader, optimizer, priva
 
 
 def build_dp_model(info_dataset, info_model, info_train, info_target, logger=None, save_path=None):
-    # TODO: to make sure that the read data belongs to our hope, no so much default value
-    # TODO: wrap the wapper of model to have the written interface
-    # TODO: check the weight, whether we have set it correctly?
     # dataset-related hyper-parameters
     ds_name, ds_path = info_dataset['NAME'], info_dataset['ROOT']
     ds_train_subset, is_normalize_ds = info_dataset.get('SUBSET', None), info_dataset.get('IS_NORMALIZE', True)

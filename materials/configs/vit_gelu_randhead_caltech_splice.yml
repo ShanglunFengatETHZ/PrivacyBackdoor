@@ -1,0 +1,53 @@
+DATASET:
+  NAME: 'caltech101'
+  ROOT: './data/caltech-101'
+  IS_NORMALIZE: True
+  RESIZE: 224
+  IS_AUGMENT: False
+  INLAID: null
+  SUBSET: null
+
+
+MODEL:
+  PATH: './weights/imagenet_gelu_small.pth'
+  USE_BACKDOOR_INITIALIZATION: True
+  USE_SEMI_ACTIVE_INITIALIZATION: False
+  ARCH: {'hidden_act': 'GELU'}
+  NUM_BACKDOORS: 32
+  IS_DOUBLE: False
+  IS_SPLICE: True
+  SCHEME: 1
+  BAIT_SETTING:
+    CONSTRUCT: {'topk':5, 'multiplier':0.075, 'subimage':null, 'is_mirror':False, 'is_centralize':True,
+                'neighbor_balance':[null, null], 'is_random': True, 'num_trials':3000}
+    SELECTION: {'min_gap':null , 'max_multiple':null, 'min_lowerbound':null,
+                'max_possible_classes':null, 'no_intersection': False, 'no_self_intersection': True}
+  WEIGHT_SETTING:
+    HIDDEN_GROUP: {'features':[0, 7], 'backdoors':[7, 8], 'images':[8, 9], 'sequence-key':[9, 10], 'position':[10, 12]}
+    PIXEL: {'xstart':0, 'xend':32 , 'xstep':4 , 'ystart':0 ,'yend':32 ,'ystep':4}
+    CONV: {'conv_img_multiplier':8.0, 'extract_approach':'gray', 'use_mirror':False, 'zero_mean':True}
+    POS_EMBEDDING: {'embedding_multiplier':50.0, 'bait_multiplier':0.1, 'lower_cosine_bound':null, 'upper_cosine_bound':0.2,
+                    'num_trial':1000, 'threshold_approach':'native', 'threshold_coefficient':1.0, 'large_constant':10000.0}
+    SEQUENCE_KEY: {'approach':'native', 'value_multiplier':4.0, 'output_multiplier':4.0, 'ln1_multiplier':1.0}
+    BACKDOOR: {'img_noise_approach':'constant', 'img_noise_multiplier':0.0, 'ft_noise_multiplier':3000.0,
+               'ln_multiplier':60.0, 'zeta_multiplier':1.0 , 'large_constant':10000.0}
+    AMPLIFIER: {'signal_amplifier_in':120.0, 'signal_amplifier_out':0.1,'noise_thres':2.0,'large_constant':10000.0}
+    CANCELLER: {'zoom_in':5.0, 'zoom_out':20.0, 'shift_constant':8.0, 'ln_multiplier':0.01, 'large_constant':10000.0}
+    PASSING: null
+    ENDING: {'large_constant':20000.0, 'signal_amplifier_in':null, 'signal_amplifier_out':null, 'noise_thres':null,
+             'ln_multiplier_ft':1.0, 'ln_multiplier_bkd':1.0}
+    HEAD: {'multiplier':null, 'use_random':True}
+  REGISTRAR: {'logit_threshold':null ,'activation_threshold':2.0, 'logit_history_length':0, 'where_activation':1} # logits & before synthesize
+
+
+TRAIN:
+  BATCH_SIZE: 128
+  LR: 0.0001
+  LR_PROBE: 0.2
+  EPOCHS: 12
+  DEVICE: 'cuda'
+  IS_DEBUG: True
+  DEBUG_DICT: {'print_period':10, 'output_logit_stat':True}
+
+
+SAVE_PATH: './finetuned_weights/vit_gelu_randhead_caltech_splice.pth'

@@ -1,0 +1,36 @@
+DATASET:
+  NAME: 'imagenet'
+  ROOT:  'PATH_TO_IMAGENET/imagenet'
+  IS_NORMALIZE: True
+  RESIZE: 224
+  IS_AUGMENT: True
+  INLAID: null
+  SUBSET: 0.8
+
+
+MODEL:
+  PATH: null
+  CLASSES: null
+  USE_BACKDOOR_INITIALIZATION: False
+  USE_SMALL_MODEL: True
+  ARCH: {'hidden_act': 'GELU'}
+  SMALL_SETTING:
+    indices_zero: [7, 12]
+    block: {'block_end':8}
+  IS_DOUBLE: False
+
+TRAIN:
+  BATCH_SIZE: 128
+  LR: 0.0005
+  LR_PROBE: 0.05
+  EPOCHS: 20
+  DEVICE: 'cuda'
+  IS_DEBUG: False
+  DEBUG_DICT: {'print_period':10, 'output_logit_stat':True}
+  NUM_WORKERS: 8
+  OPTIM:
+    OPTIMIZER: 'SGD'
+    PARAM: {'weight_decay':0.00001, 'momentum':0.5}
+
+
+SAVE_PATH: './pretr_weights/imagenet_gelu_small.pth'
