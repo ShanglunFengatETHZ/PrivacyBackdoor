@@ -177,7 +177,8 @@ def get_dataloader(ds0, batch_size, num_workers, ds1=None, shuffle=False, collat
 
     if ds1 is not None:
         ds1_loader = data.DataLoader(dataset=ds1, batch_size=batch_size, shuffle=False,
-                                     pin_memory=True, num_workers=num_workers, collate_fn=collate_fn) # shuffle v.s. sampler https://discuss.pytorch.org/t/samplers-vs-shuffling/73740
+                                     pin_memory=True, num_workers=num_workers, collate_fn=collate_fn)
+        # shuffle v.s. sampler https://discuss.pytorch.org/t/samplers-vs-shuffling/73740
         return ds0_loader, ds1_loader
     else:
         return ds0_loader

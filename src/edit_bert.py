@@ -197,7 +197,7 @@ def edit_limiter(module, act_indices=None,
                  large_constant=0.0, large_constant_indices=None,
                  last_ln_weight=None, last_ln_bias=None, act_ln_op_multiplier=0.0,
                  cancel_noise=False, noise_threshold=0.0, soft_factor=1.0):
-    # this is used for controling the upper bound of activation signal
+    # this is used for controlling the upper bound of activation signal
 
     n = module.intermediate.dense.in_features
     close_attention(module)

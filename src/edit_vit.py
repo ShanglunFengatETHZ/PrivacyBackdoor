@@ -1077,7 +1077,6 @@ class ViTWrapper(nn.Module):
             logger.info(f'maximum - threshold:{quantity[2] - threshold}')
 
         if logger is not None and self.is_splice:
-            # TODO: bait information aggregation
             pos_threshold, pos_upper, pos_lower = pos_thres_quantities
             rescaled_pos_threshold = self.backdoor_ln_multiplier * pos_threshold
             rescaled_pos_upper = self.backdoor_ln_multiplier * pos_upper
