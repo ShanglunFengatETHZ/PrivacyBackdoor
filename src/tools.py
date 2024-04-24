@@ -151,7 +151,8 @@ def conv_weights_generator(in_channels, out_channels,  window_size,
     return constant * weights
 
 
-def plot_recovery(images, bias=(0.0, 0.0, 0.0), scaling=(1.0, 1.0, 1.0), hw=None, inches=None, save_path=None, plot_gray=False):
+def plot_recovery(images, bias=(0.0, 0.0, 0.0), scaling=(1.0, 1.0, 1.0), hw=None, inches=None,
+                  save_path=None, plot_gray=False):
     # images is a list of tensors 3 * w * h or w * h
 
     assert isinstance(images, list) and len(images) > 0, 'invalid input'
@@ -163,7 +164,6 @@ def plot_recovery(images, bias=(0.0, 0.0, 0.0), scaling=(1.0, 1.0, 1.0), hw=None
     else:
         h, w = hw
     fig, axs = plt.subplots(h, w, squeeze=False)
-
 
     if inches is None:
         px = 1 / plt.rcParams['figure.dpi']
