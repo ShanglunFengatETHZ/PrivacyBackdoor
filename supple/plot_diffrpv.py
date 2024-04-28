@@ -216,7 +216,6 @@ if __name__ == '__main__':
     print(f'only shift ({concentration}, {1.0}):{epsilon_prac_onlyshift}')
     print(f'lower epsilon ({concentration}, {cond_prob}):{epsilon_prac_lower}')
 
-
     # Figure: epsilon v.s. epsilon
     save_path = None
     plot_epsilon_compare(x, epsilon_theory=epsilon_theory, epsilon_prac_upper=epsilon_prac_upper,

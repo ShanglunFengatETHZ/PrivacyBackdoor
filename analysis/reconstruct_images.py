@@ -21,7 +21,7 @@ def parse_args():
     parser.add_argument('--save_path', type=str, default=None)
     parser.add_argument('--arch', type=str, choices=['toy', 'vit'])
     parser.add_argument('--chw', nargs='+', type=int, default=None)
-    parser.add_argument('--ids', nargs='+', type=int, default=0)
+    parser.add_argument('--ids', type=int, default=0)
 
     return parser.parse_args()
 
@@ -43,14 +43,19 @@ def extract_information_toy(classifier, bias=(0.0, 0.0, 0.0), scaling=(1.0, 1.0,
 
 
 def extract_information_vit(classifier, bias=(0.0, 0.0, 0.0), scaling=(1.0, 1.0, 1.0), hw=None, inches=None,
-                            plot_mode='recovery', save_path=None):
+                            plot_mode='recovery', save_path=None, idx=0):
     if plot_mode == 'recovery':
         images = classifier.reconstruct_images()
         plot_recovery(images, scaling=scaling, bias=bias, hw=hw, inches=inches, save_path=save_path, plot_gray=True)
     elif plot_mode == 'raw':  # info, logit similarity is for debugging
         images, info = classifier.show_possible_images(approach='intelligent')
+        print([len(x) for x in info])
         logit_similarity = classifier.check_multiple_activation()
         plot_recovery(images, scaling=scaling, bias=bias, hw=hw, inches=inches, save_path=save_path,  plot_gray=False)
+    elif plot_mode == 'raw_one':
+        _, info = classifier.show_possible_images(approach='intelligent')
+        images = classifier.extract_possible_images_of(idx, info)
+        plot_recovery(images, scaling=scaling, bias=bias, hw=hw, inches=inches, save_path=save_path, plot_gray=False)
     else:
         assert False, 'please input the correct plot mode'
 
@@ -79,7 +84,7 @@ if __name__ == '__main__':
         classifier.load_information(model_dict)
         classifier.backdoor_ft_bias = 150.0
         extract_information_vit(classifier, bias=bias, scaling=scaling, hw=args.hw, inches=args.inches,
-                                plot_mode=args.plot_mode, save_path=args.save_path)
+                                plot_mode=args.plot_mode, save_path=args.save_path, idx=args.ids)
     else:
         pass
 

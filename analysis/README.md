@@ -64,4 +64,16 @@ python analysis/analyze_diffprv.py --path ./weights/GROUP/NAME_rgs_ex0.pth  --sa
 
 `--biconcentration`: [option] if `True`, the gradient concentrates on two weights(used for the random head setting) instead of one weight(used for the MLP setting)
 
+
+### Quality Analysis
+Use PSNRs and SSIMs to show the quality of reconstruction.
+
+```bash
+python analysis/quality.py --path ./weights/20230918_complete/mlp_craftedhead_cifar10.pth --hw 8 8 --arch toy
+
+
+python analysis/quality.py --path ./weights/20231228_spliceimage/vit_stitch_gelu_caltech.pth --hw 4 8 --step 4 
+
+python analysis/quality.py --path ./weights/20230918_complete/vit_gelu_craftedhead_pet.pth --hw 8 8
+```
     

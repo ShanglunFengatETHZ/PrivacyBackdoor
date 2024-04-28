@@ -1395,6 +1395,12 @@ class ViTWrapper(nn.Module):
 
         return real_images_lst, possible_images_by_backdoors
 
+    def extract_possible_images_of(self, idx=None, possible_images_by_backdoors=None):
+        if idx is not None:
+            return [x['image'] for x in possible_images_by_backdoors[idx]]
+        else:
+            return [[x['image'] for x in backdoor] for backdoor in possible_images_by_backdoors]
+
     def check_multiple_activation(self):
         logits = []
         for item in self.activation_history:
